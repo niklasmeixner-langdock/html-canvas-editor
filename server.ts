@@ -8,12 +8,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { deckToHtml, deckSummary } from "./src/html.ts";
+import { deckToHtml, deckSummary, fileSlug } from "./src/html.ts";
 import { deckStore } from "./src/store.ts";
 import type { Deck } from "./src/types.ts";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const CANVAS_URI = "ui://html-canvas/editor.html";
+// Static URI so Langdock can discover it at setup time. The last path segment
+// becomes the attachment filename (see Langdock "MCP File Outputs").
+export const DECK_FILE_URI = "file:///slides/langdock-slides.html";
+const BASE_URL_MARKER = 'window.__CANVAS_BASE__=""';
 
 const deckSchema = z.object({
   title: z.string(),
@@ -41,11 +45,14 @@ function deckResult(deck: Deck, extra?: string) {
   };
 }
 
-async function readCanvasHtml(): Promise<string> {
-  return fs.readFile(path.join(rootDir, "dist", "mcp-app.html"), "utf8");
+async function readCanvasHtml(baseUrl: string): Promise<string> {
+  const html = await fs.readFile(path.join(rootDir, "dist", "mcp-app.html"), "utf8");
+  // The app runs inside the host's sandbox origin, so it needs to know where
+  // this server lives to open download links.
+  return html.replace(BASE_URL_MARKER, `window.__CANVAS_BASE__=${JSON.stringify(baseUrl)}`);
 }
 
-export function createServer(): McpServer {
+export function createServer(baseUrl = ""): McpServer {
   const server = new McpServer({
     name: "html-canvas-editor",
     version: "0.1.0",
@@ -87,7 +94,29 @@ export function createServer(): McpServer {
         {
           uri: CANVAS_URI,
           mimeType: RESOURCE_MIME_TYPE,
-          text: await readCanvasHtml(),
+          text: await readCanvasHtml(baseUrl),
+        },
+      ],
+    }),
+  );
+
+  // Langdock turns resources/read contents with a mimeType into a downloadable
+  // attachment. This is the "give me the file" path from chat.
+  server.registerResource(
+    "deck-html",
+    DECK_FILE_URI,
+    {
+      title: "Slide deck HTML file",
+      description:
+        "Download the current 16:9 slide deck as a presentable HTML file. Read this after edits to hand the user the file.",
+      mimeType: "text/html",
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "text/html",
+          text: deckToHtml(deckStore.get()),
         },
       ],
     }),
@@ -128,14 +157,25 @@ export function createServer(): McpServer {
     "export_html",
     {
       title: "Export deck HTML",
-      description: "Return presentable 16:9 HTML for the current deck, including round-trip JSON.",
+      description:
+        `Return presentable 16:9 HTML for the current deck, including round-trip JSON. To give the user a downloadable file instead, read the resource ${DECK_FILE_URI}.`,
       inputSchema: {},
     },
     async () => {
       const deck = deckStore.get();
+      const html = deckToHtml(deck);
       return {
-        content: [{ type: "text" as const, text: deckToHtml(deck) }],
-        structuredContent: { deck, html: deckToHtml(deck) },
+        content: [
+          { type: "text" as const, text: html },
+          {
+            type: "resource_link" as const,
+            uri: DECK_FILE_URI,
+            name: `${fileSlug(deck.title)}.html`,
+            mimeType: "text/html",
+            description: "Read this resource to attach the deck as a file",
+          },
+        ],
+        structuredContent: { deck, html, downloadUrl: baseUrl ? `${baseUrl}/export?download=1` : undefined },
       };
     },
   );

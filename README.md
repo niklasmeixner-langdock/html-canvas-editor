@@ -20,7 +20,20 @@ MCP tools:
 - `load_html` / `get_deck` / `save_deck` / `export_html`
 - `add_slide` / `reset_deck`
 
+MCP resource `file:///slides/langdock-slides.html` returns the current deck as
+`text/html`. Langdock turns that into a downloadable attachment, so "give me
+the file" in chat works ([MCP file outputs](https://docs.langdock.com/en/using-langdock/guides/integrations/mcp/mcp-file-outputs)).
+
 Edits stay in memory on this service.
+
+## Download inside Langdock
+
+Langdock mounts the app in a sandbox without `allow-downloads`, so a plain
+`<a download>` is a no-op there. The Download button therefore saves the deck
+via `save_deck`, posts a snapshot to `/api/deck/snapshot`, and asks the host to
+open `/download/:id` in a new tab (15 minute link). The server injects its
+public URL into the app HTML for this; set `PUBLIC_URL` if it sits behind a
+proxy that hides the host (Railway is detected automatically).
 
 ## Editor
 

@@ -20,10 +20,11 @@
         </div>
         <div class="topbar-actions">
           <button class="btn ghost" id="fit-btn" type="button">Fit</button>
+          <button class="btn ghost" id="reset-btn" type="button">Reset</button>
+          <span class="sep"></span>
           <button class="btn" id="open-btn" type="button">Open HTML</button>
-          <button class="btn" id="copy-btn" type="button">Copy HTML</button>
+          <button class="btn" id="copy-btn" type="button">Copy</button>
           <button class="btn" id="download-btn" type="button">Download</button>
-          <button class="btn" id="reset-btn" type="button">Reset sample</button>
           <button class="btn primary" id="save-btn" type="button">Save</button>
         </div>
       </header>
@@ -32,37 +33,49 @@
           <h2>Insert</h2>
           <div class="tool-list">
             <button class="tool active" data-tool="select" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round">
                 <path d="M4 4l8 16 2-7 7-2z" />
               </svg>
-              Select
+              <span>Select</span>
+              <kbd>V</kbd>
             </button>
             <button class="tool" data-tool="text" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">
                 <path d="M5 6h14M12 6v14" />
               </svg>
-              Text
+              <span>Text</span>
+              <kbd>T</kbd>
             </button>
             <button class="tool" data-tool="image" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round">
                 <rect x="4" y="5" width="16" height="14" rx="2" />
                 <path d="M8 13l3-3 6 6" />
                 <circle cx="9" cy="9" r="1.2" fill="currentColor" />
               </svg>
-              Image
+              <span>Image</span>
+              <kbd>I</kbd>
             </button>
             <button class="tool" data-tool="container" type="button">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
                 <rect x="5" y="5" width="14" height="14" rx="2" />
               </svg>
-              Frame
+              <span>Frame</span>
+              <kbd>F</kbd>
             </button>
           </div>
-          <h2>Layers</h2>
-          <div class="layer-actions">
-            <button id="front-btn" type="button">Forward</button>
-            <button id="back-btn" type="button">Back</button>
-            <button id="delete-btn" type="button">Delete</button>
+          <div class="rail-head">
+            <h2>Layers</h2>
+            <div class="layer-actions">
+              <button id="front-btn" type="button" title="Bring forward" aria-label="Bring forward">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6" /></svg>
+              </button>
+              <button id="back-btn" type="button" title="Send back" aria-label="Send back">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6" /></svg>
+              </button>
+              <button id="delete-btn" type="button" title="Delete" aria-label="Delete">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14M9 7V5h6v2M8 7l1 12h6l1-12" /></svg>
+              </button>
+            </div>
           </div>
           <div class="layers" id="layers"></div>
         </aside>
@@ -78,11 +91,13 @@
       </div>
       <div class="filmstrip">
         <div class="thumbs" id="thumbs"></div>
-        <button class="add-slide" id="add-slide" type="button">+ Slide</button>
+        <button class="add-slide" id="add-slide" type="button" title="Add slide" aria-label="Add slide">+</button>
       </div>
+      <input id="file" type="file" accept="image/*" hidden />
+      <input id="html-file" type="file" accept=".html,.htm,text/html" hidden />
     </div>
-    <input id="file" type="file" accept="image/*" hidden />
-    <input id="html-file" type="file" accept=".html,.htm,text/html" hidden />
+    <!-- Replaced by the MCP server with its public URL when served as an app resource. -->
+    <script>window.__CANVAS_BASE__="";</script>
     <script type="module" src="/src/mcp-app.ts"></script>
   </body>
 </html>

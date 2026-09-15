@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { htmlToDeck } from "./html.ts";
 import { sampleDeck } from "./sample.ts";
 import type { Deck, DeckSource } from "./types.ts";
@@ -13,7 +14,28 @@ function stamp(deck: Deck, source: DeckSource): Deck {
 
 let current = sampleDeck();
 
+const SNAPSHOT_TTL_MS = 15 * 60 * 1000;
+const snapshots = new Map<string, { deck: Deck; expires: number }>();
+
+function pruneSnapshots() {
+  const now = Date.now();
+  for (const [id, entry] of snapshots) {
+    if (entry.expires < now) snapshots.delete(id);
+  }
+}
+
 export const deckStore = {
+  /** Store an immutable copy for a one-off download link. */
+  snapshot(deck: Deck): string {
+    pruneSnapshots();
+    const id = randomUUID();
+    snapshots.set(id, { deck: structuredClone(deck), expires: Date.now() + SNAPSHOT_TTL_MS });
+    return id;
+  },
+  readSnapshot(id: string): Deck | undefined {
+    pruneSnapshots();
+    return snapshots.get(id)?.deck;
+  },
   get(): Deck {
     return current;
   },

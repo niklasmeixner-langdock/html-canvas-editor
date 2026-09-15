@@ -37,6 +37,8 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -64,87 +66,145 @@ textarea:focus-visible {
 
 #app {
   display: grid;
-  grid-template-rows: 56px minmax(0, 1fr) 92px;
+  grid-template-rows: 48px minmax(0, 1fr) 84px;
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
 }
 
 .topbar {
+  min-width: 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 0 16px 0 18px;
+  gap: 12px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--line);
   background: var(--bg);
 }
 
 .brand {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1 1 0;
   min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 .brand strong {
-  font-size: 14px;
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 
 .brand span,
 .status {
   color: var(--muted);
   font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topbar-actions,
 .prop-row,
-.layer-actions,
-.tool-list {
+.layer-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .topbar-actions {
   align-items: center;
-  flex-wrap: wrap;
   justify-content: flex-end;
+  flex-shrink: 0;
 }
 
+.topbar-actions .sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--line-strong);
+}
+
+/* Buttons: compact, 8px radius, Langdock secondary/primary/ghost */
 button.btn,
-.tool,
 .layer-actions button {
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: var(--panel-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
   color: var(--text);
-  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
 }
 
 button.btn:hover,
-.tool:hover,
 .layer-actions button:hover {
+  background: var(--panel-2);
+  border-color: #45464c;
+}
+
+button.btn:active,
+.layer-actions button:active {
   background: #2b2c32;
 }
 
 button.btn.primary {
   background: var(--accent);
+  border-color: var(--accent);
   color: #fff;
 }
 
 button.btn.primary:hover {
   background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 button.btn.ghost {
   background: transparent;
+  border-color: transparent;
   color: var(--muted);
+}
+
+button.btn.ghost:hover {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.layer-actions button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted);
+}
+
+.layer-actions button:hover {
+  color: var(--text);
+}
+
+.layer-actions button svg {
+  width: 15px;
+  height: 15px;
 }
 
 .workspace {
   display: grid;
-  grid-template-columns: 188px minmax(0, 1fr) 228px;
+  grid-template-columns: 176px minmax(0, 1fr) 224px;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -155,7 +215,7 @@ button.btn.ghost {
   background: var(--bg);
   border-right: 1px solid var(--line);
   overflow: auto;
-  padding: 16px 14px;
+  padding: 12px 10px;
 }
 
 .props {
@@ -166,7 +226,8 @@ button.btn.ghost {
 .rail h2,
 .props h2,
 .filmstrip h2 {
-  margin: 0 0 10px;
+  margin: 0 0 6px;
+  padding: 0 6px;
   color: var(--faint);
   font-size: 11px;
   font-weight: 500;
@@ -174,37 +235,90 @@ button.btn.ghost {
   text-transform: uppercase;
 }
 
+.rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.rail-head h2 {
+  margin: 0;
+}
+
+.rail-head .layer-actions {
+  gap: 2px;
+}
+
+.rail-head .layer-actions button {
+  width: 24px;
+  height: 24px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.rail-head .layer-actions button:hover {
+  background: var(--panel-2);
+}
+
+/* Tools: vertical list rows, icon + label + shortcut */
 .tool-list {
-  flex-wrap: wrap;
-  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 18px;
 }
 
 .tool {
-  flex: 1 1 40%;
-  min-width: 72px;
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  padding: 10px 6px;
-  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool span {
+  flex: 1;
+}
+
+.tool kbd {
+  font: inherit;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.tool:hover {
+  background: var(--panel);
+  color: var(--text);
 }
 
 .tool.active {
   background: var(--accent-soft);
   color: var(--text);
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.tool.active kbd {
+  color: var(--muted);
 }
 
 .tool svg {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
 }
 
 .layers {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .layer {
@@ -212,17 +326,22 @@ button.btn.ghost {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 8px 10px;
+  height: 30px;
+  padding: 0 8px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
+  font-size: 13px;
   text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
 }
 
 .layer:hover {
-  background: var(--panel-2);
+  background: var(--panel);
 }
 
 .layer[data-active="true"] {
@@ -230,9 +349,58 @@ button.btn.ghost {
 }
 
 .layer small {
-  color: var(--muted);
+  flex-shrink: 0;
+  color: var(--faint);
   text-transform: uppercase;
   font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+/* Narrow hosts (MCP inline card): icon-only tool rail, slimmer props */
+@media (max-width: 900px) {
+  .workspace {
+    grid-template-columns: 44px minmax(0, 1fr) 196px;
+  }
+  .rail {
+    padding: 8px 6px;
+  }
+  .rail h2,
+  .rail .layers,
+  .rail-head .layer-actions,
+  .tool span,
+  .tool kbd {
+    display: none;
+  }
+  .tool {
+    justify-content: center;
+    padding: 0;
+  }
+  .brand span {
+    display: none;
+  }
+  .topbar-actions .ghost,
+  .topbar-actions .sep {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr) 176px;
+  }
+  .rail {
+    display: none;
+  }
+  #app {
+    grid-template-rows: 44px minmax(0, 1fr) 72px;
+  }
+  .thumb {
+    width: 88px;
+    height: 50px;
+  }
+  .add-slide {
+    height: 50px;
+  }
 }
 
 .viewport-wrap {
@@ -391,8 +559,9 @@ button.btn.ghost {
 
 .props .field {
   display: grid;
-  gap: 6px;
-  margin-bottom: 12px;
+  gap: 4px;
+  margin-bottom: 10px;
+  padding: 0 6px;
 }
 
 .props label {
@@ -404,44 +573,64 @@ button.btn.ghost {
 .props select,
 .props textarea {
   width: 100%;
+  height: 30px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   background: var(--panel);
   color: var(--text);
-  padding: 8px 10px;
+  font-size: 13px;
+  padding: 0 8px;
+}
+
+.props input[type="color"] {
+  padding: 2px;
 }
 
 .props textarea {
-  min-height: 88px;
+  height: auto;
+  min-height: 80px;
+  padding: 6px 8px;
   resize: vertical;
+}
+
+.props input:hover,
+.props select:hover,
+.props textarea:hover {
+  border-color: #45464c;
 }
 
 .xywh {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 6px;
 }
 
 .filmstrip {
   display: flex;
-  align-items: stretch;
-  gap: 10px;
-  padding: 12px 14px;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
   border-top: 1px solid var(--line);
   background: var(--bg);
   overflow-x: auto;
 }
 
+.filmstrip h2 {
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+
 .thumbs {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
 }
 
 .thumb {
   flex: 0 0 auto;
-  width: 128px;
-  height: 64px;
+  width: 112px;
+  height: 63px;
   padding: 0;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
@@ -451,31 +640,34 @@ button.btn.ghost {
   position: relative;
 }
 
+.thumb:hover {
+  border-color: #45464c;
+}
+
 .thumb[data-active="true"] {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .thumb span {
   position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(19, 20, 27, 0.72);
+  left: 6px;
+  bottom: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(19, 20, 27, 0.8);
   color: var(--text);
-  font-size: 11px;
-  text-align: center;
+  font-size: 10px;
 }
 
 .add-slide {
-  width: 72px;
-  height: 64px;
+  width: 40px;
+  height: 63px;
   border: 1px dashed var(--line-strong);
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
+  font-size: 18px;
   cursor: pointer;
 }
 

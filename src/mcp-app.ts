@@ -5,7 +5,18 @@ import { deckSummary } from "./html.ts";
 import { sampleDeck } from "./sample.ts";
 import type { Deck } from "./types.ts";
 
-const standalone = location.pathname === "/" || location.pathname === "/canvas" || location.search.includes("standalone=1");
+declare global {
+  interface Window {
+    __CANVAS_BASE__?: string;
+  }
+}
+
+// Served directly from our own server (top-level window) vs. mounted by an
+// MCP host inside its sandboxed iframe.
+const standalone = window.self === window.top || location.search.includes("standalone=1");
+// Absolute URL of our server. Injected by server.ts for the hosted case; in
+// standalone mode it is simply where we were loaded from.
+const serverBase = (window.__CANVAS_BASE__ || (standalone ? location.origin : "")).replace(/\/$/, "");
 const app = new App({ name: "HTML slide canvas", version: "0.1.0" });
 const editor = new SlideEditor(document.getElementById("app")!, sampleDeck());
 
@@ -105,14 +116,7 @@ function downloadFilename(): string {
   return `${fileSlug(editor.getDeck().title)}.html`;
 }
 
-async function downloadHtml() {
-  if (standalone) {
-    try {
-      await saveStandalone();
-    } catch {
-      // still download the local deck
-    }
-  }
+function downloadBlob() {
   const html = editor.exportHtml();
   const blob = new Blob([html], { type: "text/html;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -124,7 +128,58 @@ async function downloadHtml() {
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 2000);
-  editor.status = "Downloaded HTML";
+}
+
+/** Ask the server for a one-off download link for exactly this deck. */
+async function snapshotUrl(): Promise<string> {
+  const response = await fetch(`${serverBase}/api/deck/snapshot`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(editor.getDeck()),
+  });
+  if (!response.ok) throw new Error(`Snapshot failed (${response.status})`);
+  const { url } = (await response.json()) as { url: string };
+  return url;
+}
+
+async function downloadHtml() {
+  editor.status = "Preparing download…";
+  editor.render();
+
+  if (standalone) {
+    try {
+      await saveStandalone();
+    } catch {
+      // still download the local deck
+    }
+    downloadBlob();
+    editor.status = "Downloaded HTML";
+    return;
+  }
+
+  // Hosted: the sandbox iframe has no allow-downloads, so <a download> is a
+  // no-op. Save the deck via MCP, then let the host open the file URL in a tab.
+  await callTool("save_deck", { deck: editor.getDeck() });
+  let url = serverBase ? `${serverBase}/export?download=1&t=${Date.now()}` : "";
+  if (serverBase) {
+    try {
+      url = await snapshotUrl();
+    } catch {
+      // fall back to the live export of the deck we just saved
+    }
+  }
+  if (!url) {
+    // Server did not tell us where it lives; last resort is the blob.
+    downloadBlob();
+    editor.status = "Download started (if your browser allows it)";
+    return;
+  }
+  const { isError } = await app.openLink({ url });
+  setStatus(
+    isError
+      ? "Host blocked the download link · ask the chat for the file"
+      : "Download opened in a new tab",
+  );
 }
 
 async function openHtmlFile(file: File) {

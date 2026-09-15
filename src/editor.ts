@@ -40,11 +40,17 @@ export class SlideEditor {
 
   private history: Deck[] = [];
   private future: Deck[] = [];
+  /** Deck as of the last commit. Mutations happen in place on `deck`, so this
+   *  is what undo must restore. */
+  private committed: Deck;
   private editing = false;
   private spaceDown = false;
   private userZoomed = false;
   private pendingImageId: string | null = null;
   private flattening = false;
+  /** Manual double-click tracking: re-rendering the slide between clicks
+   *  swaps DOM nodes, so the browser's own dblclick never fires. */
+  private lastClick: { id: string; at: number } | null = null;
   private drag:
     | {
         kind: "move" | "resize" | "pan";
@@ -53,12 +59,12 @@ export class SlideEditor {
         startY: number;
         origin: SlideComponent;
         moved: boolean;
-        already?: boolean;
       }
     | null = null;
 
   constructor(private readonly root: HTMLElement, deck: Deck) {
     this.deck = structuredClone(deck);
+    this.committed = structuredClone(deck);
     this.bind();
     this.fit();
     this.render();
@@ -68,6 +74,7 @@ export class SlideEditor {
   setDeck(deck: Deck, status = "Loaded") {
     this.finishTextEdit();
     this.deck = structuredClone(deck);
+    this.committed = structuredClone(deck);
     this.slideIndex = 0;
     this.selectedId = null;
     this.history = [];
@@ -104,6 +111,9 @@ export class SlideEditor {
         : await flattenHtmlDocument(deckToHtml(this.deck));
       flattened.title = this.deck.title || flattened.title;
       this.deck = flattened;
+      this.committed = structuredClone(flattened);
+      this.history = [];
+      this.future = [];
       this.status = "Imported slide is editable";
       this.render();
       this.onChange?.(this.getDeck());
@@ -124,13 +134,16 @@ export class SlideEditor {
   }
 
   private commit(label?: string, redraw = true) {
-    if (this.editing) return;
-    this.history.push(structuredClone(this.deck));
+    // An inline text edit may still be open (e.g. user clicked straight into
+    // the props panel). Close it first so this change is never dropped.
+    if (this.editing) this.finishTextEdit(false);
+    this.history.push(this.committed);
     if (this.history.length > 60) this.history.shift();
     this.future = [];
     this.deck.updatedAt = new Date().toISOString();
     this.deck.source = "user";
     delete this.deck.rawHtml;
+    this.committed = structuredClone(this.deck);
     if (label) this.status = label;
     this.onChange?.(this.getDeck());
     if (redraw) this.render();
@@ -286,7 +299,22 @@ export class SlideEditor {
     }
 
     const hit = this.hit(point.x, point.y);
-    const already = hit && hit.id === this.selectedId;
+    const now = performance.now();
+    const isDouble =
+      !!hit && !!this.lastClick && this.lastClick.id === hit.id && now - this.lastClick.at < 450;
+    this.lastClick = hit ? { id: hit.id, at: now } : null;
+
+    if (hit && isDouble && hit.type === "text") {
+      this.selectedId = hit.id;
+      this.lastClick = null;
+      event.preventDefault();
+      this.startTextEdit();
+      this.renderLayers();
+      this.renderProps();
+      return;
+    }
+
+    const changed = (hit?.id ?? null) !== this.selectedId;
     this.selectedId = hit?.id ?? null;
     if (hit) {
       this.drag = {
@@ -295,13 +323,13 @@ export class SlideEditor {
         startY: event.clientY,
         origin: structuredClone(hit),
         moved: false,
-        already: Boolean(already),
       };
     }
-    this.renderSlide();
     this.renderOverlay();
-    this.renderLayers();
-    this.renderProps();
+    if (changed) {
+      this.renderLayers();
+      this.renderProps();
+    }
   }
 
   private onPointerMove(event: PointerEvent) {
@@ -342,15 +370,14 @@ export class SlideEditor {
     if (drag.kind === "pan") return;
     if (drag.moved) {
       this.commit("Moved");
-      return;
     }
-    const already = drag.already;
-    if (already && drag.origin.type === "text") {
-      this.startTextEdit();
-    }
+    // Plain clicks only select. Text editing starts on double-click or Enter
+    // so users never end up in edit mode without noticing.
   }
 
+  /** Native fallback (fires when nothing re-rendered between the clicks). */
   private onDoubleClick(event: MouseEvent) {
+    if (this.editing) return;
     const hit = this.hit(this.clientToSlide(event).x, this.clientToSlide(event).y);
     if (hit?.type === "text") {
       this.selectedId = hit.id;
@@ -424,6 +451,10 @@ export class SlideEditor {
     wrap.classList.add("editing");
     node.contentEditable = "true";
     node.spellcheck = false;
+    // Defer: during `blur` the new target is not focused yet, so a synchronous
+    // commit would rebuild the props panel and swallow the field the user just
+    // clicked. One tick later focus has settled and renderProps syncs in place.
+    node.addEventListener("blur", () => window.setTimeout(() => this.finishTextEdit(), 0), { once: true });
     node.focus();
     const selection = window.getSelection();
     const range = document.createRange();
@@ -432,14 +463,29 @@ export class SlideEditor {
     selection?.addRange(range);
   }
 
-  private finishTextEdit() {
+  /**
+   * Leave inline text edit mode. With `commitChange` the new text is written
+   * as its own history step; without it the text is applied in place so the
+   * caller's pending commit picks it up.
+   */
+  private finishTextEdit(commitChange = true) {
     if (!this.editing) return;
     const node = this.textNode();
     const text = node?.innerText.replace(/\u00a0/g, " ") ?? this.selected()?.text ?? "";
     this.editing = false;
     node?.removeAttribute("contenteditable");
     this.root.querySelector(".el.editing")?.classList.remove("editing");
-    this.mutateSelected({ text }, "Edited text");
+    const selected = this.selected();
+    if (!selected || selected.type !== "text") return;
+    if (selected.text === text) {
+      if (commitChange) this.renderOverlay();
+      return;
+    }
+    if (commitChange) {
+      this.mutateSelected({ text }, "Edited text");
+    } else {
+      selected.text = text;
+    }
   }
 
   private removeSelected() {
@@ -544,21 +590,34 @@ export class SlideEditor {
   }
 
   private undo() {
+    this.finishTextEdit();
     const previous = this.history.pop();
     if (!previous) return;
-    this.future.push(structuredClone(this.deck));
-    this.deck = previous;
+    this.future.push(this.committed);
+    this.deck = structuredClone(previous);
+    this.committed = previous;
+    this.clampSelection();
     this.status = "Undo";
+    this.onChange?.(this.getDeck());
     this.render();
   }
 
   private redo() {
     const next = this.future.pop();
     if (!next) return;
-    this.history.push(structuredClone(this.deck));
-    this.deck = next;
+    this.history.push(this.committed);
+    this.deck = structuredClone(next);
+    this.committed = next;
+    this.clampSelection();
     this.status = "Redo";
+    this.onChange?.(this.getDeck());
     this.render();
+  }
+
+  /** After undo/redo the current slide or selected component may be gone. */
+  private clampSelection() {
+    this.slideIndex = Math.min(this.slideIndex, this.deck.slides.length - 1);
+    if (this.selectedId && !this.selected()) this.selectedId = null;
   }
 
   render() {
@@ -700,10 +759,12 @@ export class SlideEditor {
 
   private renderProps() {
     const props = this.el("props");
-    if (props.contains(document.activeElement) && document.activeElement?.matches("input, textarea")) {
+    const selected = this.selected();
+    if (props.contains(document.activeElement) && document.activeElement?.matches("input, textarea, select")) {
+      // Keep the focused field alive; just refresh the other values in place.
+      if (selected) this.syncPropValues(selected);
       return;
     }
-    const selected = this.selected();
     if (!selected) {
       props.innerHTML = `
         <h2>Slide</h2>
@@ -804,6 +865,24 @@ export class SlideEditor {
       this.pendingImageId = selected.id;
       this.el<HTMLInputElement>("file").click();
     });
+  }
+
+  private syncPropValues(selected: SlideComponent) {
+    const values: Record<string, string | undefined> = {
+      "prop-x": String(Math.round(selected.x)),
+      "prop-y": String(Math.round(selected.y)),
+      "prop-w": String(Math.round(selected.width)),
+      "prop-h": String(Math.round(selected.height)),
+      "prop-name": selected.name,
+      "prop-text": selected.text,
+      "prop-size": selected.fontSize != null ? String(Math.round(selected.fontSize)) : undefined,
+      "prop-radius": selected.borderRadius != null ? String(Math.round(selected.borderRadius)) : undefined,
+    };
+    for (const [id, value] of Object.entries(values)) {
+      const field = this.root.querySelector<HTMLInputElement | HTMLTextAreaElement>(`#${id}`);
+      if (!field || field === document.activeElement || value == null) continue;
+      if (field.value !== value) field.value = value;
+    }
   }
 
   private bindField(id: string, apply: (value: string) => void, eventName: "change" | "input" = "change") {

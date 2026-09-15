@@ -16,6 +16,22 @@ function sendCanvas(_req: Request, res: Response) {
   res.sendFile(path.join(rootDir, "dist", "mcp-app.html"));
 }
 
+function publicBaseUrl(req: Request): string {
+  if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL.replace(/\/$/, "");
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  const proto = String(req.headers["x-forwarded-proto"] ?? req.protocol).split(",")[0]!.trim();
+  const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? `localhost:${port}`)
+    .split(",")[0]!
+    .trim();
+  return `${proto}://${host}`;
+}
+
+function sendDeckDownload(res: Response, html: string, title: string) {
+  res.setHeader("Content-Disposition", `attachment; filename="${fileSlug(title)}.html"`);
+  res.setHeader("Cache-Control", "no-store");
+  res.type("html").send(html);
+}
+
 function requireMcpAuth(req: Request, res: Response, next: () => void) {
   const token = process.env.MCP_AUTH_TOKEN;
   if (!token) {
@@ -79,12 +95,32 @@ async function start() {
     const deck = deckStore.get();
     const html = deckToHtml(deck);
     if (req.query.download) {
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="${fileSlug(deck.title)}.html"`,
-      );
+      sendDeckDownload(res, html, deck.title);
+      return;
     }
     res.type("html").send(html);
+  });
+
+  // Download of an exact snapshot: the editor posts the deck it has on
+  // screen, gets a short-lived id back, and opens /download/:id in a new tab.
+  // Needed because the MCP host sandbox blocks <a download> inside the iframe.
+  app.post("/api/deck/snapshot", (req, res) => {
+    try {
+      const deck = deckStore.save(req.body);
+      const id = deckStore.snapshot(deck);
+      res.json({ id, url: `${publicBaseUrl(req)}/download/${id}` });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Invalid deck" });
+    }
+  });
+
+  app.get("/download/:id", (req, res) => {
+    const deck = deckStore.readSnapshot(String(req.params.id));
+    if (!deck) {
+      res.status(404).type("text/plain").send("This download link has expired. Press Download in the editor again.\n");
+      return;
+    }
+    sendDeckDownload(res, deckToHtml(deck), deck.title);
   });
 
   app.get("/", sendCanvas);
@@ -92,7 +128,7 @@ async function start() {
   app.use(express.static(path.join(rootDir, "dist")));
 
   app.all("/mcp", requireMcpAuth, async (req, res) => {
-    const server = createServer();
+    const server = createServer(publicBaseUrl(req));
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });
