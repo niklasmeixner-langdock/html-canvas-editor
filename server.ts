@@ -7,7 +7,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { z } from "zod";
+// zod v4 API: `.meta({ format: "file" })` is how Langdock detects file inputs.
+import { z } from "zod/v4";
 import { deckToHtml, deckSummary, fileSlug } from "./src/html.ts";
 import { deckStore } from "./src/store.ts";
 import type { Deck } from "./src/types.ts";
@@ -25,20 +26,80 @@ const deckSchema = z.object({
   height: z.number(),
   source: z.enum(["sample", "user", "agent"]).optional(),
   updatedAt: z.string().optional(),
-  slides: z.array(z.record(z.unknown())),
+  slides: z.array(z.record(z.string(), z.unknown())),
 });
+
+/**
+ * Langdock file input. When a user attaches an .html file in chat and the
+ * model references it, Langdock resolves it into this object before the call
+ * reaches us (docs: "File Input in MCP Tools").
+ */
+const fileSchema = z
+  .object({
+    fileName: z.string(),
+    mimeType: z.string(),
+    base64: z.string(),
+    size: z.number().optional(),
+  })
+  .describe("An .html slide or deck attached in chat. Preferred over `html` for uploads.")
+  .meta({ format: "file" });
+
+type FileInput = z.infer<typeof fileSchema>;
+
+function decodeHtmlFile(file: FileInput): string {
+  const html = Buffer.from(file.base64, "base64").toString("utf8");
+  const looksHtml = /<\s*(!doctype|html|body|section|div|h1|p)\b/i.test(html);
+  if (!looksHtml) {
+    throw new Error(`${file.fileName} does not look like HTML (${file.mimeType}). Attach an .html slide or deck.`);
+  }
+  return html;
+}
+
+function titleFromFile(file: FileInput): string {
+  return file.fileName.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim() || "Imported deck";
+}
+
+/** Resolve whichever source the model gave us into HTML, or nothing. */
+function resolveHtml(input: { file?: FileInput; html?: string }): { html: string; fallbackTitle?: string } | null {
+  if (input.file) {
+    return { html: decodeHtmlFile(input.file), fallbackTitle: titleFromFile(input.file) };
+  }
+  if (input.html?.trim()) return { html: input.html };
+  return null;
+}
+
+/** Load HTML into the store; explicit title > <title> in the HTML > filename. */
+function loadSource(source: { html: string; fallbackTitle?: string }, explicitTitle?: string): Deck {
+  const deck = deckStore.loadHtml(source.html, "agent");
+  const title = explicitTitle ?? (deck.title === "Imported deck" ? source.fallbackTitle : undefined);
+  if (title) {
+    deck.title = title;
+    deckStore.save(deck, "agent");
+  }
+  return deck;
+}
 
 function textResult(text: string) {
   return { content: [{ type: "text" as const, text }] };
 }
 
+function errorResult(error: unknown) {
+  return {
+    isError: true,
+    content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }],
+  };
+}
+
 function deckResult(deck: Deck, extra?: string) {
   const header = extra ? `${extra}\n\n` : "";
+  // Keep the model-facing text small: the raw imported HTML only matters to
+  // the canvas, which gets it via structuredContent.
+  const { rawHtml: _rawHtml, ...forModel } = deck;
   return {
     content: [
       {
         type: "text" as const,
-        text: `${header}${deckSummary(deck)}\n\n${JSON.stringify(deck, null, 2)}`,
+        text: `${header}${deckSummary(deck)}\n\n${JSON.stringify(forModel, null, 2)}`,
       },
     ],
     structuredContent: { deck },
@@ -64,23 +125,33 @@ export function createServer(baseUrl = ""): McpServer {
     {
       title: "Show HTML slide canvas",
       description:
-        "Open the 16:9 HTML slide canvas. Optionally load HTML first so the user can drag, resize, and add text, images, or frames without another prompt.",
+        "Open the 16:9 HTML slide canvas. When the user attaches or mentions an .html slide, pass it as `file` so the canvas opens with it already loaded and editable in one step. Use this instead of load_html whenever the user should see the editor.",
       inputSchema: {
+        file: fileSchema.optional(),
         html: z
           .string()
           .optional()
-          .describe("Full HTML deck or a single slide. Round-trips if it contains deck-data JSON."),
-        title: z.string().optional().describe("Deck title when loading fresh HTML"),
+          .describe("Inline HTML for a deck or single slide when there is no attached file."),
+        title: z.string().optional().describe("Deck title override"),
       },
       _meta: { ui: { resourceUri: CANVAS_URI } },
     },
-    async ({ html, title }) => {
-      if (html) {
-        const deck = deckStore.loadHtml(html, "agent");
-        if (title) deck.title = title;
-        return deckResult(deck, "Opened the canvas with the provided HTML.");
+    async (input) => {
+      try {
+        const source = resolveHtml(input);
+        if (source) {
+          const deck = loadSource(source, input.title);
+          return deckResult(
+            deck,
+            input.file
+              ? `Opened the canvas with ${input.file.fileName}. The user can now edit it directly.`
+              : "Opened the canvas with the provided HTML.",
+          );
+        }
+        return deckResult(deckStore.get(), "Opened the current HTML slide canvas.");
+      } catch (error) {
+        return errorResult(error);
       }
-      return deckResult(deckStore.get(), "Opened the current HTML slide canvas.");
     },
   );
 
@@ -122,24 +193,31 @@ export function createServer(baseUrl = ""): McpServer {
     }),
   );
 
-  server.registerTool(
+  // Also an app tool: loading a file shows the canvas right away instead of
+  // needing a second show_editor call.
+  registerAppTool(
+    server,
     "load_html",
     {
       title: "Load HTML into the canvas",
       description:
-        "Replace the current deck with HTML. Prefer exporting from this editor so the deck JSON survives. Arbitrary HTML becomes an imported slide the user can overlay.",
+        "Replace the current deck with an attached .html file or inline HTML and show the canvas. Existing slides become editable layers.",
       inputSchema: {
-        html: z.string().describe("HTML for one slide or a full deck"),
+        file: fileSchema.optional(),
+        html: z.string().optional().describe("Inline HTML for one slide or a full deck"),
         title: z.string().optional(),
       },
+      _meta: { ui: { resourceUri: CANVAS_URI } },
     },
-    async ({ html, title }) => {
-      const deck = deckStore.loadHtml(html, "agent");
-      if (title) {
-        deck.title = title;
-        deckStore.save(deck, "agent");
+    async (input) => {
+      try {
+        const source = resolveHtml(input);
+        if (!source) return errorResult("Pass an attached .html file as `file` or inline `html`.");
+        const deck = loadSource(source, input.title);
+        return deckResult(deck, "Loaded HTML into the canvas.");
+      } catch (error) {
+        return errorResult(error);
       }
-      return deckResult(deck, "Loaded HTML into the canvas.");
     },
   );
 

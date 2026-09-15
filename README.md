@@ -16,9 +16,16 @@ This is a standalone MCP App. Same pattern as the Camunda canvas: a real iframe 
 
 MCP tools:
 
-- `show_editor` — opens the MCP App; optional `html` loads a draft first
-- `load_html` / `get_deck` / `save_deck` / `export_html`
+- `show_editor` — opens the MCP App. Pass an attached `.html` as `file`
+  (Langdock resolves chat attachments into `{ fileName, mimeType, base64 }`
+  via `format: "file"`, see [file input](https://docs.langdock.com/en/using-langdock/guides/integrations/mcp/mcp-file-input))
+  or inline `html`; the canvas opens with the deck already loaded.
+- `load_html` — same inputs, also renders the app
+- `get_deck` / `save_deck` / `export_html`
 - `add_slide` / `reset_deck`
+
+Attach a slide in chat and say "open this in the canvas" — one tool call, no
+separate load step.
 
 MCP resource `file:///slides/langdock-slides.html` returns the current deck as
 `text/html`. Langdock turns that into a downloadable attachment, so "give me
