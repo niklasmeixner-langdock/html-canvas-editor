@@ -5,46 +5,15 @@ import type { Request, Response } from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { deckToHtml } from "./src/html.ts";
+import { deckToHtml, fileSlug } from "./src/html.ts";
 import { deckStore } from "./src/store.ts";
 import { createServer } from "./server.ts";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT ?? 8788);
 
-function landingPage(req: Request): string {
-  const origin = `${req.protocol}://${req.get("host")}`;
-  return `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>HTML slide canvas</title>
-    <style>
-      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
-      body { margin: 0; background: #111; color: #eee; }
-      main { max-width: 1200px; margin: 0 auto; padding: 24px; }
-      h1 { font-size: 1.35rem; margin: 0 0 8px; }
-      p { line-height: 1.5; color: #bbb; }
-      code { background: #222; padding: 1px 6px; border-radius: 4px; }
-      .meta { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0 20px; }
-      .pill { background: #1c1c1c; border: 1px solid #333; border-radius: 999px; padding: 6px 12px; font-size: 0.9rem; }
-      iframe { width: 100%; height: 78vh; min-height: 640px; border: 1px solid #333; border-radius: 12px; background: #1c1c1c; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>HTML slide canvas</h1>
-      <p>Figma-like 16:9 editor for HTML decks. Same UI is the MCP App via <code>show_editor</code>.</p>
-      <div class="meta">
-        <span class="pill">MCP <code>${origin}/mcp</code></span>
-        <span class="pill">Canvas <code>${origin}/canvas</code></span>
-        <span class="pill">Export <code>${origin}/export</code></span>
-      </div>
-      <iframe title="HTML slide canvas" src="/canvas"></iframe>
-    </main>
-  </body>
-</html>`;
+function sendCanvas(_req: Request, res: Response) {
+  res.sendFile(path.join(rootDir, "dist", "mcp-app.html"));
 }
 
 function requireMcpAuth(req: Request, res: Response, next: () => void) {
@@ -93,25 +62,33 @@ async function start() {
   });
 
   app.post("/api/deck/html", (req, res) => {
-    const html = typeof req.body?.html === "string" ? req.body.html : "";
+    const html =
+      typeof req.body === "string"
+        ? req.body
+        : typeof req.body?.html === "string"
+          ? req.body.html
+          : "";
     if (!html.trim()) {
       res.status(400).json({ error: "html is required" });
       return;
     }
-    res.json(deckStore.loadHtml(html, "agent"));
+    res.json(deckStore.loadHtml(html, "user"));
   });
 
-  app.get("/export", (_req, res) => {
-    res.type("html").send(deckToHtml(deckStore.get()));
+  app.get("/export", (req, res) => {
+    const deck = deckStore.get();
+    const html = deckToHtml(deck);
+    if (req.query.download) {
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${fileSlug(deck.title)}.html"`,
+      );
+    }
+    res.type("html").send(html);
   });
 
-  app.get("/", (req, res) => {
-    res.type("html").send(landingPage(req));
-  });
-
-  app.get("/canvas", (_req, res) => {
-    res.sendFile(path.join(rootDir, "dist", "mcp-app.html"));
-  });
+  app.get("/", sendCanvas);
+  app.get("/canvas", sendCanvas);
   app.use(express.static(path.join(rootDir, "dist")));
 
   app.all("/mcp", requireMcpAuth, async (req, res) => {

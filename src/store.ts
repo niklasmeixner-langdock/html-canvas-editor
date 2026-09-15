@@ -26,6 +26,7 @@ export const deckStore = {
         ...deck,
         width: 1920,
         height: 1080,
+        rawHtml: deck.rawHtml,
         slides: deck.slides.map((slide, index) => ({
           ...slide,
           name: slide.name || `Slide ${index + 1}`,

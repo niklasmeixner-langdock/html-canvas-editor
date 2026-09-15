@@ -22,8 +22,10 @@
 html,
 body,
 #app {
+  width: 100%;
   height: 100%;
   margin: 0;
+  overflow: hidden;
 }
 
 body {
@@ -40,8 +42,9 @@ textarea {
 
 #app {
   display: grid;
-  grid-template-rows: 52px 1fr 112px;
-  min-height: 100%;
+  grid-template-rows: 48px minmax(0, 1fr) 88px;
+  height: 100%;
+  min-height: 0;
 }
 
 .topbar {
@@ -81,6 +84,8 @@ textarea {
 
 .topbar-actions {
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 button.btn,
@@ -112,8 +117,10 @@ button.btn.ghost {
 
 .workspace {
   display: grid;
-  grid-template-columns: 232px 1fr 260px;
+  grid-template-columns: 176px minmax(0, 1fr) 220px;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .rail,
@@ -198,6 +205,7 @@ button.btn.ghost {
 }
 
 .viewport-wrap {
+  position: relative;
   min-width: 0;
   min-height: 0;
   background: var(--canvas);
@@ -205,6 +213,7 @@ button.btn.ghost {
 }
 
 #viewport {
+  position: relative;
   width: 100%;
   height: 100%;
   cursor: default;
@@ -212,7 +221,9 @@ button.btn.ghost {
 }
 
 #stage {
-  position: relative;
+  position: absolute;
+  left: 0;
+  top: 0;
   width: 1920px;
   height: 1080px;
   transform-origin: 0 0;
@@ -252,9 +263,15 @@ button.btn.ghost {
   outline: none;
 }
 
+.el.editing {
+  z-index: 4;
+  outline: 2px solid var(--accent);
+}
+
 .el.editing .text {
   user-select: text;
   cursor: text;
+  caret-color: #0d99ff;
 }
 
 .image-ph {
@@ -389,8 +406,8 @@ button.btn.ghost {
 
 .thumb {
   flex: 0 0 auto;
-  width: 148px;
-  height: 84px;
+  width: 128px;
+  height: 64px;
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -404,26 +421,20 @@ button.btn.ghost {
   border-color: var(--accent);
 }
 
-.thumb-preview {
-  position: absolute;
-  inset: 0;
-  transform-origin: 0 0;
-  transform: scale(0.077);
-  pointer-events: none;
-}
-
 .thumb span {
   position: absolute;
-  left: 6px;
-  bottom: 5px;
-  color: #fff;
-  font-size: 10px;
-  text-shadow: 0 1px 4px #000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  color: #111;
+  font-size: 11px;
+  text-align: center;
 }
 
 .add-slide {
-  width: 84px;
-  height: 84px;
+  width: 72px;
+  height: 64px;
   border: 1px dashed var(--line);
   border-radius: 8px;
   background: transparent;

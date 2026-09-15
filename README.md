@@ -28,6 +28,7 @@ Edits stay in memory on this service.
 - Insert **text**, **image**, or **frame**
 - Drag to move, handles to resize, double-click text to edit
 - Layers, undo (`⌘Z`), duplicate (`⌘D`), arrow-key nudge
+- Open or drop an existing `.html` slide — layers become editable
 - Copy or download HTML. Deck JSON is embedded so the next `load_html` round-trips.
 
 ## Run locally

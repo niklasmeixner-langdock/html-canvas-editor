@@ -12,9 +12,16 @@ test("round-trips the sample deck through HTML", () => {
   assert.equal(restored.slides[0]?.components[1]?.text, original.slides[0]?.components[1]?.text);
 });
 
-test("wraps arbitrary HTML as a single imported slide", () => {
-  const restored = htmlToDeck("<h1>Hello from the agent</h1>");
+test("turns uploaded slide HTML into editable text", () => {
+  const restored = htmlToDeck(`
+    <div class="slide" style="background:#F1F0ED">
+      <h1 data-slot="title">Hello from the agent</h1>
+      <p data-slot="subtitle">Move this copy without another prompt.</p>
+    </div>
+  `);
   assert.equal(restored.slides.length, 1);
-  assert.equal(restored.slides[0]?.components[0]?.type, "html");
-  assert.match(restored.slides[0]?.components[0]?.html ?? "", /Hello from the agent/);
+  const texts = restored.slides[0]?.components.filter((component) => component.type === "text") ?? [];
+  assert.equal(texts.length >= 2, true);
+  assert.match(texts.map((component) => component.text).join(" "), /Hello from the agent/);
+  assert.ok(restored.rawHtml);
 });

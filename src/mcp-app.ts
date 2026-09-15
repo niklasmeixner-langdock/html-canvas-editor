@@ -1,10 +1,11 @@
 import { App } from "@modelcontextprotocol/ext-apps";
 import { SlideEditor } from "./editor.ts";
+import { fileSlug } from "./html.ts";
 import { deckSummary } from "./html.ts";
 import { sampleDeck } from "./sample.ts";
 import type { Deck } from "./types.ts";
 
-const standalone = location.pathname === "/canvas" || location.search.includes("standalone=1");
+const standalone = location.pathname === "/" || location.pathname === "/canvas" || location.search.includes("standalone=1");
 const app = new App({ name: "HTML slide canvas", version: "0.1.0" });
 const editor = new SlideEditor(document.getElementById("app")!, sampleDeck());
 
@@ -56,7 +57,7 @@ async function saveStandalone() {
     throw new Error(`Save failed (${response.status})`);
   }
   const saved = (await response.json()) as Deck;
-  setStatus(`Saved ${saved.updatedAt}`);
+  editor.status = `Saved ${saved.updatedAt}`;
 }
 
 async function resetStandalone() {
@@ -77,17 +78,17 @@ async function callTool(name: string, args: Record<string, unknown> = {}) {
 }
 
 async function save() {
-  setStatus("Saving…");
+  editor.status = "Saving…";
   if (standalone) {
     await saveStandalone();
     return;
   }
   await callTool("save_deck", { deck: editor.getDeck() });
-  setStatus("Saved to MCP store");
+  editor.status = "Saved to MCP store";
 }
 
 async function reset() {
-  setStatus("Resetting…");
+  editor.status = "Resetting…";
   if (standalone) {
     await resetStandalone();
     return;
@@ -97,18 +98,37 @@ async function reset() {
 
 async function copyHtml() {
   await navigator.clipboard.writeText(editor.exportHtml());
-  setStatus("HTML copied");
+  editor.status = "HTML copied";
 }
 
-function downloadHtml() {
-  const blob = new Blob([editor.exportHtml()], { type: "text/html" });
+function downloadFilename(): string {
+  return `${fileSlug(editor.getDeck().title)}.html`;
+}
+
+async function downloadHtml() {
+  if (standalone) {
+    try {
+      await saveStandalone();
+    } catch {
+      // still download the local deck
+    }
+  }
+  const html = editor.exportHtml();
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${editor.getDeck().title.replace(/\s+/g, "-").toLowerCase() || "deck"}.html`;
+  link.download = downloadFilename();
+  link.rel = "noopener";
+  document.body.append(link);
   link.click();
-  URL.revokeObjectURL(url);
-  setStatus("Downloaded HTML");
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+  editor.status = "Downloaded HTML";
+}
+
+async function openHtmlFile(file: File) {
+  await editor.importHtml(await file.text());
 }
 
 document.getElementById("save-btn")!.addEventListener("click", () => {
@@ -120,7 +140,18 @@ document.getElementById("reset-btn")!.addEventListener("click", () => {
 document.getElementById("copy-btn")!.addEventListener("click", () => {
   void copyHtml().catch((error) => setStatus(error instanceof Error ? error.message : "Copy failed"));
 });
-document.getElementById("download-btn")!.addEventListener("click", downloadHtml);
+document.getElementById("download-btn")!.addEventListener("click", () => {
+  void downloadHtml().catch((error) => setStatus(error instanceof Error ? error.message : "Download failed"));
+});
+document.getElementById("open-btn")!.addEventListener("click", () => {
+  document.getElementById("html-file")!.click();
+});
+document.getElementById("html-file")!.addEventListener("change", () => {
+  const input = document.getElementById("html-file") as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (file) void openHtmlFile(file).catch((error) => setStatus(error instanceof Error ? error.message : "Import failed"));
+});
 
 app.ontoolresult = (result) => {
   const deck = deckFromToolResult(result);
@@ -145,7 +176,7 @@ async function start() {
     return;
   }
   app.connect();
-  setStatus("Waiting for host…");
+  editor.status = "Waiting for host…";
 }
 
 void start().catch((error) => {

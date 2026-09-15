@@ -45,6 +45,7 @@ export type Deck = {
   slides: Slide[];
   source: DeckSource;
   updatedAt: string;
+  rawHtml?: string;
 };
 
 export function uid(prefix = "id"): string {
