@@ -197,10 +197,18 @@ export class SlideEditor {
       (event) => {
         event.preventDefault();
         this.userZoomed = true;
-        const factor = event.deltaY > 0 ? 0.92 : 1.08;
-        this.zoom = Math.min(1.8, Math.max(0.08, this.zoom * factor));
-        this.applyTransform();
-        this.renderStatus();
+        // Figma conventions: scroll/two-finger pans, ⌘/Ctrl+scroll and pinch
+        // (which browsers report as ctrlKey wheel) zoom around the cursor.
+        if (event.ctrlKey || event.metaKey) {
+          // Pinch sends small deltas, a mouse wheel notch ~100: clamp so one
+          // notch is at most ~1.4×.
+          const factor = Math.exp(-Math.max(-100, Math.min(100, event.deltaY)) * 0.0035);
+          this.zoomAt(this.zoom * factor, event.clientX, event.clientY);
+        } else {
+          this.panX -= event.deltaX;
+          this.panY -= event.deltaY;
+          this.applyTransform();
+        }
       },
       { passive: false },
     );
@@ -247,6 +255,32 @@ export class SlideEditor {
       `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom})`;
   }
 
+  /** Change zoom keeping the slide point under (clientX, clientY) fixed. */
+  private zoomAt(next: number, clientX: number, clientY: number) {
+    const zoom = Math.min(1.8, Math.max(0.08, next));
+    const rect = this.el("viewport").getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    const ratio = zoom / this.zoom;
+    this.panX = px - (px - this.panX) * ratio;
+    this.panY = py - (py - this.panY) * ratio;
+    this.zoom = zoom;
+    this.applyTransform();
+    this.renderStatus();
+  }
+
+  private startPan(event: PointerEvent) {
+    this.drag = {
+      kind: "pan",
+      startX: event.clientX - this.panX,
+      startY: event.clientY - this.panY,
+      origin: this.selected() ?? defaultComponent("container", 0, 0),
+      moved: false,
+    };
+    this.userZoomed = true;
+    this.el("viewport").classList.add("panning");
+  }
+
   private clientToSlide(event: PointerEvent | MouseEvent | DragEvent): { x: number; y: number } {
     const rect = this.el("slide").getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return { x: 0, y: 0 };
@@ -291,13 +325,7 @@ export class SlideEditor {
     }
 
     if (event.button === 1 || this.spaceDown) {
-      this.drag = {
-        kind: "pan",
-        startX: event.clientX - this.panX,
-        startY: event.clientY - this.panY,
-        origin: this.selected() ?? defaultComponent("container", 0, 0),
-        moved: false,
-      };
+      this.startPan(event);
       return;
     }
 
@@ -333,6 +361,10 @@ export class SlideEditor {
         origin: structuredClone(hit),
         moved: false,
       };
+    } else {
+      // Empty canvas or empty slide area: a plain click deselects, dragging
+      // pans, like every other canvas tool.
+      this.startPan(event);
     }
     this.renderOverlay();
     if (changed) {
@@ -376,7 +408,10 @@ export class SlideEditor {
     if (!this.drag) return;
     const drag = this.drag;
     this.drag = null;
-    if (drag.kind === "pan") return;
+    if (drag.kind === "pan") {
+      this.el("viewport").classList.remove("panning");
+      return;
+    }
     if (drag.moved) {
       this.commit("Moved");
     }

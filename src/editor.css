@@ -420,6 +420,11 @@ button.btn.ghost:hover {
   overflow: hidden;
 }
 
+#viewport.panning,
+#viewport.panning * {
+  cursor: grabbing;
+}
+
 #stage {
   position: absolute;
   left: 0;

@@ -64,7 +64,9 @@ nav/controls are dropped; iframe shell pages are unwrapped.
 
 ## Editor
 
-- 1920×1080 slides, zoom/pan, 8px snap (hold Alt to disable)
+- 1920×1080 slides, 8px snap (hold Alt to disable)
+- Navigation like Figma: drag empty canvas (or Space/middle-drag) to pan,
+  scroll to pan, ⌘/Ctrl+scroll or pinch to zoom around the cursor, Fit to reset
 - Insert **text**, **image**, or **frame**
 - Drag to move, handles to resize, double-click text to edit
 - Layers, undo (`⌘Z`), duplicate (`⌘D`), arrow-key nudge
