@@ -44,7 +44,7 @@ const fileSchema = z
     base64: z.string(),
     size: z.number().optional(),
   })
-  .describe("The .html slide or deck the user attached in chat.")
+  .describe("The .html slide or deck the user attached in chat. Always use this for attachments (reference the attached file here).")
   .meta({ format: "file" });
 
 type FileInput = z.infer<typeof fileSchema>;
@@ -100,12 +100,31 @@ async function unwrapIframeShell(html: string): Promise<string> {
   }
 }
 
+/** A path or filename where markup was expected (e.g. `/mnt/data/deck.html`). */
+function looksLikeFileReference(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.includes("<")) return false;
+  return (
+    trimmed.length < 400 &&
+    (/^(\/mnt\/data\/|attachment\/\/|file:\/\/|https?:\/\/)/i.test(trimmed) || /\.html?$/i.test(trimmed))
+  );
+}
+
 async function resolveHtml(input: { file?: FileInput; html?: string }): Promise<{ html: string; fallbackTitle?: string } | null> {
   if (input.file) {
     return { html: await unwrapIframeShell(decodeHtmlFile(input.file)), fallbackTitle: titleFromFile(input.file) };
   }
-  if (input.html?.trim()) return { html: await unwrapIframeShell(input.html) };
-  return null;
+  const inline = input.html?.trim();
+  if (!inline) return null;
+  if (looksLikeFileReference(inline)) {
+    throw new Error(
+      `\`html\` received a file reference ("${inline}") instead of HTML markup. Attached files must be passed in the \`file\` parameter (pass the same reference there); \`html\` is only for raw markup.`,
+    );
+  }
+  if (!looksLikeHtml(inline)) {
+    throw new Error("`html` does not contain HTML markup. Pass raw HTML, or an attached file in `file`.");
+  }
+  return { html: await unwrapIframeShell(inline) };
 }
 
 function deckResult(deck: Deck, extra?: string) {
@@ -147,7 +166,7 @@ export function createServer(baseUrl = ""): McpServer {
     {
       instructions: [
         "Slide canvas: a Figma-like editor for 16:9 HTML slides that the user edits directly, without prompting you for each change.",
-        "Use open_slide_canvas whenever the user wants to see, edit, or start slides. If they attached an .html file, pass it as `file`.",
+        "Use open_slide_canvas whenever the user wants to see, edit, or start slides. If they attached an .html file, pass it in the `file` parameter directly; never read the file or paste its path into `html`.",
         "The canvas persists its own edits. Only call export_slides_html when the user asks for the HTML or a downloadable file; it needs the deckId from open_slide_canvas.",
         "Do not call save_deck; the canvas UI does that.",
       ].join(" "),
@@ -160,13 +179,18 @@ export function createServer(baseUrl = ""): McpServer {
     {
       title: "Open slide canvas",
       description: [
-        "Open the interactive 16:9 slide canvas for the user. This is the only tool needed to start or continue editing.",
-        "Pass the user's attached .html file as `file` (or HTML as `html`) to open it already loaded and editable in one step.",
-        "Pass `deckId` to reopen a deck from earlier in the conversation. With no input, opens a fresh blank deck.",
+        "Open the interactive 16:9 slide canvas for the user. This is the only tool needed to start or continue editing; do not read or inspect the file first.",
+        "If the user attached an .html file, pass it in `file` (the canvas opens with it loaded and every text/image/frame editable).",
+        "Use `html` only for markup you wrote yourself. Pass `deckId` to reopen a deck from earlier in the conversation. With no input, opens a blank deck.",
       ].join(" "),
       inputSchema: {
         file: fileSchema.optional(),
-        html: z.string().optional().describe("Inline HTML for a deck or single slide (only when there is no attached file)."),
+        html: z
+          .string()
+          .optional()
+          .describe(
+            "Raw HTML markup you generated yourself, starting with a tag. NEVER a file path or filename: attached files go in `file`.",
+          ),
         deckId: deckIdSchema.optional(),
         title: z.string().optional().describe("Deck title. Defaults to the file's <title> or filename."),
       },
