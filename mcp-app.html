@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HTML slide canvas</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <strong id="deck-title">HTML slide canvas</strong>
+          <span id="status">Loading…</span>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn ghost" id="fit-btn" type="button">Fit</button>
+          <button class="btn" id="copy-btn" type="button">Copy HTML</button>
+          <button class="btn" id="download-btn" type="button">Download</button>
+          <button class="btn" id="reset-btn" type="button">Reset sample</button>
+          <button class="btn primary" id="save-btn" type="button">Save</button>
+        </div>
+      </header>
+      <div class="workspace">
+        <aside class="rail">
+          <h2>Insert</h2>
+          <div class="tool-list">
+            <button class="tool active" data-tool="select" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 4l8 16 2-7 7-2z" />
+              </svg>
+              Select
+            </button>
+            <button class="tool" data-tool="text" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 6h14M12 6v14" />
+              </svg>
+              Text
+            </button>
+            <button class="tool" data-tool="image" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="4" y="5" width="16" height="14" rx="2" />
+                <path d="M8 13l3-3 6 6" />
+                <circle cx="9" cy="9" r="1.2" fill="currentColor" />
+              </svg>
+              Image
+            </button>
+            <button class="tool" data-tool="container" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="5" y="5" width="14" height="14" rx="2" />
+              </svg>
+              Frame
+            </button>
+          </div>
+          <h2>Layers</h2>
+          <div class="layer-actions">
+            <button id="front-btn" type="button">Forward</button>
+            <button id="back-btn" type="button">Back</button>
+            <button id="delete-btn" type="button">Delete</button>
+          </div>
+          <div class="layers" id="layers"></div>
+        </aside>
+        <div class="viewport-wrap">
+          <div id="viewport">
+            <div id="stage">
+              <div id="slide"></div>
+              <div id="overlay"></div>
+            </div>
+          </div>
+        </div>
+        <aside class="props" id="props"></aside>
+      </div>
+      <div class="filmstrip">
+        <div class="thumbs" id="thumbs"></div>
+        <button class="add-slide" id="add-slide" type="button">+ Slide</button>
+      </div>
+    </div>
+    <input id="file" type="file" accept="image/*" hidden />
+    <script type="module" src="/src/mcp-app.ts"></script>
+  </body>
+</html>

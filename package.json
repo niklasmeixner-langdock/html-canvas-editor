@@ -1,0 +1,34 @@
+{
+  "name": "html-canvas-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP App: Figma-like 16:9 HTML slide canvas",
+  "scripts": {
+    "dev": "concurrently --raw \"cross-env NODE_ENV=development vite build --watch\" \"tsx watch main.ts\"",
+    "build": "vite build",
+    "start": "tsx main.ts",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.0.1",
+    "@modelcontextprotocol/sdk": "^1.25.2",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "tsx": "^4.20.5",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.5.2",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.5",
+    "vite-plugin-singlefile": "^2.3.0"
+  }
+}
