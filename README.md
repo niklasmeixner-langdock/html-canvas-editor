@@ -26,8 +26,13 @@ Deliberately small so the model picks the right one:
 - `export_slides_html` — `deckId` → presentable HTML plus a `resource_link` to
   `file:///slides/<deckId>.html`. Reading that resource makes Langdock attach
   the file ([MCP file outputs](https://docs.langdock.com/en/using-langdock/guides/integrations/mcp/mcp-file-outputs)).
-- `save_deck` — app-only (`_meta.ui.visibility: ["app"]`); the canvas autosaves
-  through it. Not for the model.
+- `save_deck` — app-only (`_meta.ui.visibility: ["app"]`); fallback save path
+  for the canvas. Not for the model.
+
+The canvas normally saves with a direct `PUT /api/decks/:id` to this server
+rather than through `save_deck`: tool calls from an app go through the host's
+API, and Langdock rejects inputs over 1 MB (`Input too large`), which any deck
+with inline images exceeds. Same for downloads (`POST /api/snapshots`).
 
 Attach a slide in chat and say "open this in the canvas" — one tool call.
 
@@ -42,9 +47,9 @@ for 7 days.
 ## Download inside Langdock
 
 Langdock mounts the app in a sandbox without `allow-downloads`, so a plain
-`<a download>` is a no-op there. The Download button therefore saves the deck
-via `save_deck`, posts a snapshot to `/api/snapshots`, and asks the host to
-open `/download/:id` in a new tab. The server injects its public URL into the
+`<a download>` is a no-op there. The Download button therefore posts the deck
+on screen to `/api/snapshots` and asks the host to open `/download/:id` in a
+new tab; it does not wait on a save. The server injects its public URL into the
 app HTML for this; set `PUBLIC_URL` if it sits behind a proxy that hides the
 host (Railway is detected automatically).
 

@@ -83,33 +83,51 @@ async function loadStandalone() {
   editor.setDeck(deck, deckSummary(deck));
 }
 
+/** What we send over the wire: the raw import is only needed until flattened. */
+function deckForSave(): Deck {
+  const { rawHtml: _rawHtml, ...deck } = editor.getDeck();
+  return deck as Deck;
+}
+
+/** Write the deck straight to our server (no host in between, 12 MB limit). */
+async function putDeck(deck: Deck): Promise<Deck> {
+  const response = await fetch(`${serverBase}/api/decks/${encodeURIComponent(deck.id!)}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(deck),
+  });
+  if (!response.ok) throw new Error(`Save failed (${response.status})`);
+  return (await response.json()) as Deck;
+}
+
 async function saveStandalone() {
-  const deck = editor.getDeck();
+  const deck = deckForSave();
   if (!deck.id) {
     const created = await createStandaloneDeck({});
     deck.id = created.id;
     editor.adoptId(created.id!);
   }
-  const response = await fetch(`/api/decks/${encodeURIComponent(deck.id!)}`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(deck),
-  });
-  if (!response.ok) {
-    throw new Error(`Save failed (${response.status})`);
-  }
-  const saved = (await response.json()) as Deck;
+  const saved = await putDeck(deck);
   editor.adoptId(saved.id!);
   rememberDeckId(saved.id!);
   editor.status = `Saved ${saved.updatedAt}`;
 }
 
 /**
- * Persist through the MCP host. Only the id is taken from the response: the
- * editor keeps its own state (selection, history) instead of reloading.
+ * Hosted save. Preferred path is a direct PUT to our server: the MCP route
+ * goes through the host's API, and Langdock rejects tool inputs above 1 MB
+ * ("Input too large"), which any deck with inline images exceeds. The
+ * save_deck tool is only the fallback when we do not know our own URL.
+ * Only the id is taken from the response: the editor keeps its own state.
  */
 async function saveHosted() {
-  const result = await app.callServerTool({ name: "save_deck", arguments: { deck: editor.getDeck() } });
+  const deck = deckForSave();
+  if (serverBase && deck.id) {
+    const saved = await putDeck(deck);
+    editor.adoptId(saved.id!);
+    return;
+  }
+  const result = await app.callServerTool({ name: "save_deck", arguments: { deck } });
   if (result.isError) {
     const text = result.content?.find((part) => part.type === "text");
     throw new Error(text && "text" in text ? String(text.text) : "Save failed");
@@ -168,7 +186,7 @@ async function snapshotUrl(): Promise<string> {
   const response = await fetch(`${serverBase}/api/snapshots`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(editor.getDeck()),
+    body: JSON.stringify(deckForSave()),
   });
   if (!response.ok) throw new Error(`Snapshot failed (${response.status})`);
   const { url } = (await response.json()) as { url: string };
@@ -191,14 +209,18 @@ async function downloadHtml() {
   }
 
   // Hosted: the sandbox iframe has no allow-downloads, so <a download> is a
-  // no-op. Save the deck via MCP, then let the host open a snapshot URL.
-  await saveHosted();
+  // no-op. The snapshot carries the exact deck on screen, so the download
+  // never waits on (or fails with) the save; that runs alongside.
+  void saveHosted().catch(() => {
+    /* surfaced on explicit Save */
+  });
   let url = "";
   if (serverBase) {
     try {
       url = await snapshotUrl();
-    } catch {
-      url = "";
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Snapshot failed");
+      return;
     }
   }
   if (!url) {

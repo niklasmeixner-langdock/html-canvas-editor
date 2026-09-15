@@ -129,14 +129,16 @@ async function resolveHtml(input: { file?: FileInput; html?: string }): Promise<
 
 function deckResult(deck: Deck, extra?: string) {
   const header = extra ? `${extra}\n\n` : "";
-  // Keep the model-facing text small: the raw imported HTML only matters to
-  // the canvas, which gets it via structuredContent.
-  const { rawHtml: _rawHtml, ...forModel } = deck;
+  // Keep the model-facing text small: the deck itself (which can carry inline
+  // images) only matters to the canvas, which gets it via structuredContent.
+  const slides = deck.slides
+    .map((slide, index) => `${index + 1}. ${slide.name} (${slide.components.length} layers)`)
+    .join("\n");
   return {
     content: [
       {
         type: "text" as const,
-        text: `${header}deckId: ${deck.id}\n${deckSummary(deck)}\n\n${JSON.stringify(forModel, null, 2)}`,
+        text: `${header}deckId: ${deck.id}\n${deckSummary(deck)}\n${slides}`,
       },
     ],
     structuredContent: { deckId: deck.id, deck },
