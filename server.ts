@@ -3,7 +3,7 @@ import {
   registerAppTool,
   RESOURCE_MIME_TYPE,
 } from "@modelcontextprotocol/ext-apps/server";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,17 +15,20 @@ import type { Deck } from "./src/types.ts";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const CANVAS_URI = "ui://html-canvas/editor.html";
-// Static URI so Langdock can discover it at setup time. The last path segment
-// becomes the attachment filename (see Langdock "MCP File Outputs").
-export const DECK_FILE_URI = "file:///slides/langdock-slides.html";
 const BASE_URL_MARKER = 'window.__CANVAS_BASE__=""';
 
+export function deckFileUri(deckId: string): string {
+  return `file:///slides/${deckId}.html`;
+}
+
 const deckSchema = z.object({
+  id: z.string().optional(),
   title: z.string(),
   width: z.number(),
   height: z.number(),
   source: z.enum(["sample", "user", "agent"]).optional(),
   updatedAt: z.string().optional(),
+  rawHtml: z.string().optional(),
   slides: z.array(z.record(z.string(), z.unknown())),
 });
 
@@ -41,15 +44,22 @@ const fileSchema = z
     base64: z.string(),
     size: z.number().optional(),
   })
-  .describe("An .html slide or deck attached in chat. Preferred over `html` for uploads.")
+  .describe("The .html slide or deck the user attached in chat.")
   .meta({ format: "file" });
 
 type FileInput = z.infer<typeof fileSchema>;
 
+const deckIdSchema = z
+  .string()
+  .describe("Deck id returned by open_slide_canvas (also shown in its result as `deckId`).");
+
+function looksLikeHtml(text: string): boolean {
+  return /<\s*(!doctype|html|body|section|div|h1|p)\b/i.test(text);
+}
+
 function decodeHtmlFile(file: FileInput): string {
   const html = Buffer.from(file.base64, "base64").toString("utf8");
-  const looksHtml = /<\s*(!doctype|html|body|section|div|h1|p)\b/i.test(html);
-  if (!looksHtml) {
+  if (!looksLikeHtml(html)) {
     throw new Error(`${file.fileName} does not look like HTML (${file.mimeType}). Attach an .html slide or deck.`);
   }
   return html;
@@ -59,35 +69,43 @@ function titleFromFile(file: FileInput): string {
   return file.fileName.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim() || "Imported deck";
 }
 
-/** Resolve whichever source the model gave us into HTML, or nothing. */
-function resolveHtml(input: { file?: FileInput; html?: string }): { html: string; fallbackTitle?: string } | null {
+/**
+ * Some "HTML files" are just a shell that iframes the real page (preview
+ * wrappers do this). Editing the shell gives a blank dark slide, so unwrap:
+ * use `srcdoc` when present, fetch an http(s) `src` otherwise.
+ */
+async function unwrapIframeShell(html: string): Promise<string> {
+  const body = html.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? html;
+  const stripped = body.replace(/<script\b[\s\S]*?<\/script>/gi, "").replace(/<!--[\s\S]*?-->/g, "");
+  const iframes = [...stripped.matchAll(/<iframe\b([^>]*)>/gi)];
+  const textOutside = stripped.replace(/<iframe\b[\s\S]*?(?:<\/iframe>|>)/gi, "").replace(/<[^>]+>/g, "").trim();
+  if (iframes.length !== 1 || textOutside.length > 40) return html;
+
+  const attrs = iframes[0]![1] ?? "";
+  const srcdoc = attrs.match(/\bsrcdoc\s*=\s*"([^"]*)"|\bsrcdoc\s*=\s*'([^']*)'/i);
+  if (srcdoc) {
+    const raw = srcdoc[1] ?? srcdoc[2] ?? "";
+    return raw.replaceAll("&quot;", '"').replaceAll("&#39;", "'").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+  }
+  const src = attrs.match(/\bsrc\s*=\s*"([^"]*)"|\bsrc\s*=\s*'([^']*)'/i);
+  const url = src?.[1] ?? src?.[2];
+  if (!url || !/^https?:\/\//i.test(url)) return html;
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(8000), redirect: "follow" });
+    if (!response.ok) return html;
+    const text = await response.text();
+    return text.length <= 5_000_000 && looksLikeHtml(text) ? text : html;
+  } catch {
+    return html;
+  }
+}
+
+async function resolveHtml(input: { file?: FileInput; html?: string }): Promise<{ html: string; fallbackTitle?: string } | null> {
   if (input.file) {
-    return { html: decodeHtmlFile(input.file), fallbackTitle: titleFromFile(input.file) };
+    return { html: await unwrapIframeShell(decodeHtmlFile(input.file)), fallbackTitle: titleFromFile(input.file) };
   }
-  if (input.html?.trim()) return { html: input.html };
+  if (input.html?.trim()) return { html: await unwrapIframeShell(input.html) };
   return null;
-}
-
-/** Load HTML into the store; explicit title > <title> in the HTML > filename. */
-function loadSource(source: { html: string; fallbackTitle?: string }, explicitTitle?: string): Deck {
-  const deck = deckStore.loadHtml(source.html, "agent");
-  const title = explicitTitle ?? (deck.title === "Imported deck" ? source.fallbackTitle : undefined);
-  if (title) {
-    deck.title = title;
-    deckStore.save(deck, "agent");
-  }
-  return deck;
-}
-
-function textResult(text: string) {
-  return { content: [{ type: "text" as const, text }] };
-}
-
-function errorResult(error: unknown) {
-  return {
-    isError: true,
-    content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }],
-  };
 }
 
 function deckResult(deck: Deck, extra?: string) {
@@ -99,11 +117,21 @@ function deckResult(deck: Deck, extra?: string) {
     content: [
       {
         type: "text" as const,
-        text: `${header}${deckSummary(deck)}\n\n${JSON.stringify(forModel, null, 2)}`,
+        text: `${header}deckId: ${deck.id}\n${deckSummary(deck)}\n\n${JSON.stringify(forModel, null, 2)}`,
       },
     ],
-    structuredContent: { deck },
+    structuredContent: { deckId: deck.id, deck },
   };
+}
+
+function errorResult(message: string) {
+  return { isError: true, content: [{ type: "text" as const, text: message }] };
+}
+
+function unknownDeck(deckId: string) {
+  return errorResult(
+    `No deck with id "${deckId}" (never created, or expired after 7 days). Call open_slide_canvas to start a new one.`,
+  );
 }
 
 async function readCanvasHtml(baseUrl: string): Promise<string> {
@@ -114,43 +142,59 @@ async function readCanvasHtml(baseUrl: string): Promise<string> {
 }
 
 export function createServer(baseUrl = ""): McpServer {
-  const server = new McpServer({
-    name: "html-canvas-editor",
-    version: "0.1.0",
-  });
+  const server = new McpServer(
+    { name: "langdock-slide-canvas", version: "0.2.0" },
+    {
+      instructions: [
+        "Slide canvas: a Figma-like editor for 16:9 HTML slides that the user edits directly, without prompting you for each change.",
+        "Use open_slide_canvas whenever the user wants to see, edit, or start slides. If they attached an .html file, pass it as `file`.",
+        "The canvas persists its own edits. Only call export_slides_html when the user asks for the HTML or a downloadable file; it needs the deckId from open_slide_canvas.",
+        "Do not call save_deck; the canvas UI does that.",
+      ].join(" "),
+    },
+  );
 
   registerAppTool(
     server,
-    "show_editor",
+    "open_slide_canvas",
     {
-      title: "Show HTML slide canvas",
-      description:
-        "Open the 16:9 HTML slide canvas. When the user attaches or mentions an .html slide, pass it as `file` so the canvas opens with it already loaded and editable in one step. Use this instead of load_html whenever the user should see the editor.",
+      title: "Open slide canvas",
+      description: [
+        "Open the interactive 16:9 slide canvas for the user. This is the only tool needed to start or continue editing.",
+        "Pass the user's attached .html file as `file` (or HTML as `html`) to open it already loaded and editable in one step.",
+        "Pass `deckId` to reopen a deck from earlier in the conversation. With no input, opens a fresh blank deck.",
+      ].join(" "),
       inputSchema: {
         file: fileSchema.optional(),
-        html: z
-          .string()
-          .optional()
-          .describe("Inline HTML for a deck or single slide when there is no attached file."),
-        title: z.string().optional().describe("Deck title override"),
+        html: z.string().optional().describe("Inline HTML for a deck or single slide (only when there is no attached file)."),
+        deckId: deckIdSchema.optional(),
+        title: z.string().optional().describe("Deck title. Defaults to the file's <title> or filename."),
       },
       _meta: { ui: { resourceUri: CANVAS_URI } },
     },
     async (input) => {
       try {
-        const source = resolveHtml(input);
+        if (input.deckId) {
+          const existing = deckStore.get(input.deckId);
+          if (!existing) return unknownDeck(input.deckId);
+          return deckResult(existing, "Reopened the canvas.");
+        }
+        const source = await resolveHtml(input);
         if (source) {
-          const deck = loadSource(source, input.title);
+          const deck = deckStore.createFromHtml(source.html, "agent");
+          const title = input.title ?? (deck.title === "Imported deck" ? source.fallbackTitle : undefined);
+          if (title) deckStore.save({ ...deck, title }, "agent");
           return deckResult(
-            deck,
+            deckStore.get(deck.id)!,
             input.file
-              ? `Opened the canvas with ${input.file.fileName}. The user can now edit it directly.`
+              ? `Opened the canvas with ${input.file.fileName}. The user edits it directly; you do not need to do anything else.`
               : "Opened the canvas with the provided HTML.",
           );
         }
-        return deckResult(deckStore.get(), "Opened the current HTML slide canvas.");
+        const blank = deckStore.createBlank(input.title);
+        return deckResult(blank, "Opened a blank canvas.");
       } catch (error) {
-        return errorResult(error);
+        return errorResult(error instanceof Error ? error.message : String(error));
       }
     },
   );
@@ -171,125 +215,70 @@ export function createServer(baseUrl = ""): McpServer {
     }),
   );
 
-  // Langdock turns resources/read contents with a mimeType into a downloadable
-  // attachment. This is the "give me the file" path from chat.
-  server.registerResource(
-    "deck-html",
-    DECK_FILE_URI,
-    {
-      title: "Slide deck HTML file",
-      description:
-        "Download the current 16:9 slide deck as a presentable HTML file. Read this after edits to hand the user the file.",
-      mimeType: "text/html",
-    },
-    async (uri) => ({
-      contents: [
-        {
-          uri: uri.href,
-          mimeType: "text/html",
-          text: deckToHtml(deckStore.get()),
-        },
-      ],
-    }),
-  );
-
-  // Also an app tool: loading a file shows the canvas right away instead of
-  // needing a second show_editor call.
-  registerAppTool(
-    server,
-    "load_html",
-    {
-      title: "Load HTML into the canvas",
-      description:
-        "Replace the current deck with an attached .html file or inline HTML and show the canvas. Existing slides become editable layers.",
-      inputSchema: {
-        file: fileSchema.optional(),
-        html: z.string().optional().describe("Inline HTML for one slide or a full deck"),
-        title: z.string().optional(),
-      },
-      _meta: { ui: { resourceUri: CANVAS_URI } },
-    },
-    async (input) => {
-      try {
-        const source = resolveHtml(input);
-        if (!source) return errorResult("Pass an attached .html file as `file` or inline `html`.");
-        const deck = loadSource(source, input.title);
-        return deckResult(deck, "Loaded HTML into the canvas.");
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
   server.registerTool(
-    "get_deck",
+    "export_slides_html",
     {
-      title: "Get current deck",
-      description: "Return the structured 16:9 deck currently in the editor store.",
-      inputSchema: {},
+      title: "Export slides as HTML",
+      description: [
+        "Return the deck as presentable, self-contained 16:9 HTML. Use only when the user asks for the HTML, the file, or a download.",
+        "The result includes a resource link; read it to hand the user the file as an attachment.",
+      ].join(" "),
+      inputSchema: { deckId: deckIdSchema },
     },
-    async () => deckResult(deckStore.get()),
-  );
-
-  server.registerTool(
-    "export_html",
-    {
-      title: "Export deck HTML",
-      description:
-        `Return presentable 16:9 HTML for the current deck, including round-trip JSON. To give the user a downloadable file instead, read the resource ${DECK_FILE_URI}.`,
-      inputSchema: {},
-    },
-    async () => {
-      const deck = deckStore.get();
+    async ({ deckId }) => {
+      const deck = deckStore.get(deckId);
+      if (!deck) return unknownDeck(deckId);
       const html = deckToHtml(deck);
+      const id = deckStore.snapshot(deck);
       return {
         content: [
           { type: "text" as const, text: html },
           {
             type: "resource_link" as const,
-            uri: DECK_FILE_URI,
+            uri: deckFileUri(deck.id!),
             name: `${fileSlug(deck.title)}.html`,
             mimeType: "text/html",
-            description: "Read this resource to attach the deck as a file",
+            description: "Read this resource to attach the deck as a downloadable file",
           },
         ],
-        structuredContent: { deck, html, downloadUrl: baseUrl ? `${baseUrl}/export?download=1` : undefined },
+        structuredContent: {
+          deckId: deck.id,
+          downloadUrl: baseUrl ? `${baseUrl}/download/${id}` : undefined,
+        },
       };
     },
   );
 
-  server.registerTool(
+  // Per-deck download resource. Langdock turns resources/read contents into
+  // an attachment; the last path segment becomes the filename.
+  server.registerResource(
+    "deck-html",
+    new ResourceTemplate("file:///slides/{deckId}.html", { list: undefined }),
+    {
+      title: "Slide deck HTML file",
+      description: "The deck with this id as a downloadable .html file.",
+      mimeType: "text/html",
+    },
+    async (uri, { deckId }) => {
+      const deck = deckStore.get(String(deckId));
+      if (!deck) throw new Error(`Unknown deck ${String(deckId)}`);
+      return {
+        contents: [{ uri: uri.href, mimeType: "text/html", text: deckToHtml(deck) }],
+      };
+    },
+  );
+
+  // Called by the canvas UI after edits. Hidden from the model.
+  registerAppTool(
+    server,
     "save_deck",
     {
-      title: "Save deck",
-      description: "Save a structured deck. This is what the canvas calls after an edit.",
-      inputSchema: {
-        deck: deckSchema.describe("Structured deck JSON from the editor"),
-      },
+      title: "Save deck (internal)",
+      description: "Internal: the canvas UI persists its edits with this. Do not call it yourself.",
+      inputSchema: { deck: deckSchema },
+      _meta: { ui: { visibility: ["app"] } },
     },
-    async ({ deck }) => deckResult(deckStore.save(deck as Deck, "user"), "Saved deck."),
-  );
-
-  server.registerTool(
-    "add_slide",
-    {
-      title: "Add slide",
-      description: "Append an empty 16:9 slide to the current deck.",
-      inputSchema: {
-        name: z.string().optional(),
-      },
-    },
-    async ({ name }) => deckResult(deckStore.addSlide(name), "Added a slide."),
-  );
-
-  server.registerTool(
-    "reset_deck",
-    {
-      title: "Reset deck",
-      description: "Restore the sample three-slide deck.",
-      inputSchema: {},
-    },
-    async () => deckResult(deckStore.reset(), "Reset to the sample deck."),
+    async ({ deck }) => deckResult(deckStore.save(deck as Deck, "user"), "Saved."),
   );
 
   return server;

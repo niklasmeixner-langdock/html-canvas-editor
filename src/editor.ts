@@ -89,6 +89,12 @@ export class SlideEditor {
     return structuredClone(this.deck);
   }
 
+  /** Server assigned (or confirmed) the id this deck is stored under. */
+  adoptId(id: string) {
+    this.deck.id = id;
+    this.committed.id = id;
+  }
+
   exportHtml(): string {
     return deckToHtml(this.getDeck());
   }
@@ -97,6 +103,8 @@ export class SlideEditor {
     this.status = "Importing…";
     this.renderStatus();
     const flattened = await flattenHtmlDocument(html);
+    // Same deck, new content: keep the id so saves stay in place.
+    flattened.id = this.deck.id;
     this.setDeck(flattened, `Imported ${flattened.slides.length} slide${flattened.slides.length === 1 ? "" : "s"}`);
     this.onChange?.(this.getDeck());
   }
@@ -110,6 +118,7 @@ export class SlideEditor {
         ? await flattenHtmlDocument(source)
         : await flattenHtmlDocument(deckToHtml(this.deck));
       flattened.title = this.deck.title || flattened.title;
+      flattened.id = this.deck.id;
       this.deck = flattened;
       this.committed = structuredClone(flattened);
       this.history = [];

@@ -1,4 +1,4 @@
-import { cssColorToHex, isTransparent } from "./color.ts";
+import { colorAlpha, cssColorValue, isTransparent } from "./color.ts";
 import type { Deck, Slide, SlideComponent } from "./types.ts";
 import {
   SLIDE_HEIGHT,
@@ -27,6 +27,24 @@ function urlFromCss(value: string): string {
   return match?.[2] ?? "";
 }
 
+function isGradient(value: string): boolean {
+  return /gradient\(/i.test(value);
+}
+
+/**
+ * The CSS `background` an element paints with: gradient image if any,
+ * otherwise its colour (alpha preserved). Empty when it paints nothing.
+ */
+function paintedBackground(style: CSSStyleDeclaration): string {
+  const image = style.backgroundImage;
+  if (image && image !== "none" && isGradient(image)) {
+    const color = isTransparent(style.backgroundColor) ? "" : ` ${cssColorValue(style.backgroundColor)}`;
+    return `${image}${color}`;
+  }
+  if (!isTransparent(style.backgroundColor)) return cssColorValue(style.backgroundColor);
+  return "";
+}
+
 function mapRect(
   rect: DOMRect,
   root: DOMRect,
@@ -45,8 +63,12 @@ function flattenSlideEl(root: Element, index: number): Slide {
   const slide = emptySlide(`Slide ${index + 1}`);
   const rootRect = root.getBoundingClientRect();
   const rootStyle = getComputedStyle(root);
-  if (!isTransparent(rootStyle.backgroundColor)) {
-    slide.background = cssColorToHex(rootStyle.backgroundColor);
+  const rootBackground = paintedBackground(rootStyle);
+  if (rootBackground) slide.background = rootBackground;
+  // A translucent slide root shows the page behind it; bake that in.
+  if (rootBackground && colorAlpha(rootStyle.backgroundColor) < 1 && !isGradient(rootBackground)) {
+    const behind = root.parentElement ? paintedBackground(getComputedStyle(root.parentElement)) : "";
+    if (behind) slide.background = `linear-gradient(${rootBackground}, ${rootBackground}) ${behind}`;
   }
 
   const add = (component: SlideComponent) => {
@@ -55,14 +77,17 @@ function flattenSlideEl(root: Element, index: number): Slide {
     slide.components.push(boxed);
   };
 
-  const visit = (el: Element) => {
+  const visit = (el: Element, inheritedOpacity: number) => {
     const style = getComputedStyle(el);
-    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+    const ownOpacity = Number.parseFloat(style.opacity);
+    const opacity = inheritedOpacity * (Number.isFinite(ownOpacity) ? ownOpacity : 1);
+    if (style.display === "none" || style.visibility === "hidden" || opacity <= 0.01) {
       return;
     }
     const rect = el.getBoundingClientRect();
     if (rect.width < 4 || rect.height < 2) return;
     const box = mapRect(rect, rootRect);
+    const round = (value: number) => Math.round(value * 100) / 100;
 
     if (el instanceof HTMLImageElement && el.src) {
       add({
@@ -70,7 +95,7 @@ function flattenSlideEl(root: Element, index: number): Slide {
         type: "image",
         name: el.alt || "Image",
         ...box,
-        opacity: 1,
+        opacity: round(opacity),
         src: el.src,
         objectFit: (style.objectFit as SlideComponent["objectFit"]) || "cover",
       });
@@ -78,28 +103,25 @@ function flattenSlideEl(root: Element, index: number): Slide {
     }
 
     const bgImage = urlFromCss(style.backgroundImage);
+    const background = paintedBackground(style);
     if (bgImage) {
       add({
         id: uid("image"),
         type: "image",
         name: "Background image",
         ...box,
-        opacity: 1,
+        opacity: round(opacity),
         src: bgImage,
-        objectFit: "contain",
+        objectFit: style.backgroundSize === "contain" ? "contain" : "cover",
       });
-    } else if (
-      !isTransparent(style.backgroundColor) &&
-      cssColorToHex(style.backgroundColor) !== cssColorToHex(slide.background) &&
-      el !== root
-    ) {
+    } else if (background && el !== root && background !== slide.background) {
       add({
         id: uid("container"),
         type: "container",
-        name: el.className || "Frame",
+        name: (typeof el.className === "string" && el.className.split(/\s+/)[0]) || "Frame",
         ...box,
-        opacity: 1,
-        background: cssColorToHex(style.backgroundColor),
+        opacity: round(opacity),
+        background,
         borderRadius: Number.parseFloat(style.borderRadius) || 0,
         border:
           style.borderWidth !== "0px" && style.borderStyle !== "none"
@@ -116,21 +138,22 @@ function flattenSlideEl(root: Element, index: number): Slide {
         type: "text",
         name: el.getAttribute("data-slot") || el.tagName.toLowerCase(),
         ...box,
-        opacity: 1,
+        opacity: round(opacity),
         text,
         fontSize: Math.max(12, Math.round(Number.parseFloat(style.fontSize) || 24)),
         fontWeight: Number.parseInt(style.fontWeight, 10) || 400,
         fontFamily: style.fontFamily,
-        color: cssColorToHex(style.color),
+        color: cssColorValue(style.color),
         textAlign: (style.textAlign as SlideComponent["textAlign"]) || "left",
         lineHeight: Number.parseFloat(style.lineHeight) / Math.max(Number.parseFloat(style.fontSize) || 24, 1) || 1.2,
       });
     }
 
-    for (const child of children) visit(child);
+    for (const child of children) visit(child, opacity);
   };
 
-  for (const child of [...root.children]) visit(child);
+  const rootOpacity = Number.parseFloat(rootStyle.opacity);
+  for (const child of [...root.children]) visit(child, Number.isFinite(rootOpacity) && rootOpacity > 0 ? 1 : 1);
   if (!slide.components.length) {
     const fallback = visibleText(root);
     if (fallback) {

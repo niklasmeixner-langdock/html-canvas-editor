@@ -8,39 +8,54 @@ This is a standalone MCP App. Same pattern as the Camunda canvas: a real iframe 
 
 | URL | Purpose |
 | --- | --- |
-| `/` | Landing page with the editor in an iframe |
-| `/canvas` | The editor |
-| `/export` | Current deck as presentable HTML |
+| `/` or `/canvas` | The editor (standalone; `?deck=<id>` keeps your deck across reloads) |
+| `/download/:snapshotId` | Deck download, 15 minute link |
 | `/mcp` | Streamable HTTP MCP endpoint for Langdock |
 | `/health` | Health check |
 
-MCP tools:
+## MCP surface
 
-- `show_editor` — opens the MCP App. Pass an attached `.html` as `file`
-  (Langdock resolves chat attachments into `{ fileName, mimeType, base64 }`
-  via `format: "file"`, see [file input](https://docs.langdock.com/en/using-langdock/guides/integrations/mcp/mcp-file-input))
-  or inline `html`; the canvas opens with the deck already loaded.
-- `load_html` — same inputs, also renders the app
-- `get_deck` / `save_deck` / `export_html`
-- `add_slide` / `reset_deck`
+Deliberately small so the model picks the right one:
 
-Attach a slide in chat and say "open this in the canvas" — one tool call, no
-separate load step.
+- `open_slide_canvas` — the only tool needed to start or continue. Pass an
+  attached `.html` as `file` (Langdock resolves chat attachments into
+  `{ fileName, mimeType, base64 }` via `format: "file"`, see
+  [file input](https://docs.langdock.com/en/using-langdock/guides/integrations/mcp/mcp-file-input)),
+  inline `html`, a `deckId` to reopen, or nothing for a blank deck. The canvas
+  renders with the deck loaded and returns its `deckId`.
+- `export_slides_html` — `deckId` → presentable HTML plus a `resource_link` to
+  `file:///slides/<deckId>.html`. Reading that resource makes Langdock attach
+  the file ([MCP file outputs](https://docs.langdock.com/en/using-langdock/guides/integrations/mcp/mcp-file-outputs)).
+- `save_deck` — app-only (`_meta.ui.visibility: ["app"]`); the canvas autosaves
+  through it. Not for the model.
 
-MCP resource `file:///slides/langdock-slides.html` returns the current deck as
-`text/html`. Langdock turns that into a downloadable attachment, so "give me
-the file" in chat works ([MCP file outputs](https://docs.langdock.com/en/using-langdock/guides/integrations/mcp/mcp-file-outputs)).
+Attach a slide in chat and say "open this in the canvas" — one tool call.
 
-Edits stay in memory on this service.
+### Isolation
+
+MCP hosts call this server statelessly and send no per-conversation identity,
+so every deck gets a server-minted id and **all** state is keyed by it. There
+is no "current deck": a caller only reaches a deck whose id they were given.
+Imports always mint a new id (exported files carry none). Decks live in memory
+for 7 days.
 
 ## Download inside Langdock
 
 Langdock mounts the app in a sandbox without `allow-downloads`, so a plain
 `<a download>` is a no-op there. The Download button therefore saves the deck
-via `save_deck`, posts a snapshot to `/api/deck/snapshot`, and asks the host to
-open `/download/:id` in a new tab (15 minute link). The server injects its
-public URL into the app HTML for this; set `PUBLIC_URL` if it sits behind a
-proxy that hides the host (Railway is detected automatically).
+via `save_deck`, posts a snapshot to `/api/snapshots`, and asks the host to
+open `/download/:id` in a new tab. The server injects its public URL into the
+app HTML for this; set `PUBLIC_URL` if it sits behind a proxy that hides the
+host (Railway is detected automatically).
+
+## Import fidelity
+
+Imported HTML is flattened in the browser into real layers (text, image,
+frame) using computed layout, so any slide becomes editable — not just decks
+exported from here. Inside Langdock's sandbox a nested iframe is opaque, so the
+flatten runs in a Shadow DOM container instead. Translucent colours, gradients
+and opacity are preserved; hidden "presentation mode" slides are recovered;
+nav/controls are dropped; iframe shell pages are unwrapped.
 
 ## Editor
 

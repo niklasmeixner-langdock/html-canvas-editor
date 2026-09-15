@@ -39,6 +39,9 @@ export type Slide = {
 };
 
 export type Deck = {
+  /** Server-assigned. Every tool call and save is scoped to this id; there is
+   *  no global "current deck", so sessions never see each other's work. */
+  id?: string;
   title: string;
   width: typeof SLIDE_WIDTH;
   height: typeof SLIDE_HEIGHT;

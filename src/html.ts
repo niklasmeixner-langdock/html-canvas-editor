@@ -74,7 +74,8 @@ ${slide.components.map(renderComponent).join("\n")}
 }
 
 export function deckToHtml(deck: Deck): string {
-  const payload = JSON.stringify({ ...deck, rawHtml: undefined });
+  // No id: an exported file re-imported elsewhere must get its own deck.
+  const payload = JSON.stringify({ ...deck, id: undefined, rawHtml: undefined });
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

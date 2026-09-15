@@ -4,6 +4,7 @@ import { fileSlug } from "./html.ts";
 import { deckSummary } from "./html.ts";
 import { sampleDeck } from "./sample.ts";
 import type { Deck } from "./types.ts";
+import { emptyDeck, emptySlide } from "./types.ts";
 
 declare global {
   interface Window {
@@ -48,18 +49,48 @@ function deckFromToolResult(result: {
   return null;
 }
 
+/** Standalone: the deck id lives in the URL so a reload keeps your work. */
+function urlDeckId(): string | null {
+  return new URLSearchParams(location.search).get("deck");
+}
+
+function rememberDeckId(id: string) {
+  const params = new URLSearchParams(location.search);
+  if (params.get("deck") === id) return;
+  params.set("deck", id);
+  history.replaceState(null, "", `${location.pathname}?${params}`);
+}
+
+async function createStandaloneDeck(body: Record<string, unknown>): Promise<Deck> {
+  const response = await fetch("/api/decks", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`Could not create deck (${response.status})`);
+  return (await response.json()) as Deck;
+}
+
 async function loadStandalone() {
-  const response = await fetch("/api/deck");
-  if (!response.ok) {
-    throw new Error(`Failed to load deck (${response.status})`);
+  const id = urlDeckId();
+  let deck: Deck | null = null;
+  if (id) {
+    const response = await fetch(`/api/decks/${encodeURIComponent(id)}`);
+    if (response.ok) deck = (await response.json()) as Deck;
   }
-  const deck = (await response.json()) as Deck;
+  if (!deck) deck = await createStandaloneDeck({ sample: true });
+  rememberDeckId(deck.id!);
   editor.setDeck(deck, deckSummary(deck));
 }
 
 async function saveStandalone() {
   const deck = editor.getDeck();
-  const response = await fetch("/api/deck", {
+  if (!deck.id) {
+    const created = await createStandaloneDeck({});
+    deck.id = created.id;
+    editor.adoptId(created.id!);
+  }
+  const response = await fetch(`/api/decks/${encodeURIComponent(deck.id!)}`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(deck),
@@ -68,43 +99,45 @@ async function saveStandalone() {
     throw new Error(`Save failed (${response.status})`);
   }
   const saved = (await response.json()) as Deck;
+  editor.adoptId(saved.id!);
+  rememberDeckId(saved.id!);
   editor.status = `Saved ${saved.updatedAt}`;
 }
 
-async function resetStandalone() {
-  const response = await fetch("/api/deck/reset", { method: "POST" });
-  if (!response.ok) {
-    throw new Error(`Reset failed (${response.status})`);
+/**
+ * Persist through the MCP host. Only the id is taken from the response: the
+ * editor keeps its own state (selection, history) instead of reloading.
+ */
+async function saveHosted() {
+  const result = await app.callServerTool({ name: "save_deck", arguments: { deck: editor.getDeck() } });
+  if (result.isError) {
+    const text = result.content?.find((part) => part.type === "text");
+    throw new Error(text && "text" in text ? String(text.text) : "Save failed");
   }
-  editor.setDeck((await response.json()) as Deck, "Reset to sample deck");
-}
-
-async function callTool(name: string, args: Record<string, unknown> = {}) {
-  const result = await app.callServerTool({ name, arguments: args });
-  const deck = deckFromToolResult(result);
-  if (deck) {
-    editor.setDeck(deck, `Loaded from ${name}`);
-  }
-  return result;
+  const saved = deckFromToolResult(result);
+  if (saved?.id) editor.adoptId(saved.id);
 }
 
 async function save() {
   editor.status = "Saving…";
+  editor.render();
   if (standalone) {
     await saveStandalone();
-    return;
+  } else {
+    await saveHosted();
+    editor.status = "Saved";
   }
-  await callTool("save_deck", { deck: editor.getDeck() });
-  editor.status = "Saved to MCP store";
+  editor.render();
 }
 
+/** Reset is local: a blank deck under the same id, nothing else is touched. */
 async function reset() {
-  editor.status = "Resetting…";
-  if (standalone) {
-    await resetStandalone();
-    return;
-  }
-  await callTool("reset_deck");
+  const id = editor.getDeck().id;
+  const blank = emptyDeck("Untitled deck");
+  blank.slides = [emptySlide("Slide 1")];
+  blank.id = id;
+  editor.setDeck(blank, "Blank deck");
+  await save();
 }
 
 async function copyHtml() {
@@ -132,7 +165,7 @@ function downloadBlob() {
 
 /** Ask the server for a one-off download link for exactly this deck. */
 async function snapshotUrl(): Promise<string> {
-  const response = await fetch(`${serverBase}/api/deck/snapshot`, {
+  const response = await fetch(`${serverBase}/api/snapshots`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(editor.getDeck()),
@@ -158,20 +191,20 @@ async function downloadHtml() {
   }
 
   // Hosted: the sandbox iframe has no allow-downloads, so <a download> is a
-  // no-op. Save the deck via MCP, then let the host open the file URL in a tab.
-  await callTool("save_deck", { deck: editor.getDeck() });
-  let url = serverBase ? `${serverBase}/export?download=1&t=${Date.now()}` : "";
+  // no-op. Save the deck via MCP, then let the host open a snapshot URL.
+  await saveHosted();
+  let url = "";
   if (serverBase) {
     try {
       url = await snapshotUrl();
     } catch {
-      // fall back to the live export of the deck we just saved
+      url = "";
     }
   }
   if (!url) {
     // Server did not tell us where it lives; last resort is the blob.
     downloadBlob();
-    editor.status = "Download started (if your browser allows it)";
+    setStatus("Download started (if your browser allows it)");
     return;
   }
   const { isError } = await app.openLink({ url });
@@ -215,14 +248,17 @@ app.ontoolresult = (result) => {
   }
 };
 
-editor.onChange = (deck) => {
-  if (standalone) {
-    void fetch("/api/deck", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(deck),
+// Autosave, debounced, so a closed tab or a "give me the file" in chat never
+// sees stale slides.
+let autosave: number | undefined;
+editor.onChange = () => {
+  window.clearTimeout(autosave);
+  autosave = window.setTimeout(() => {
+    const run = standalone ? saveStandalone() : saveHosted();
+    void run.catch(() => {
+      /* surfaced on explicit Save */
     });
-  }
+  }, 800);
 };
 
 async function start() {

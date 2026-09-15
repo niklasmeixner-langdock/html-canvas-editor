@@ -59,55 +59,46 @@ async function start() {
     res.type("text/plain").send("ok\n");
   });
 
-  app.get("/api/deck", (_req, res) => {
-    res.json(deckStore.get());
-  });
-
-  app.put("/api/deck", (req, res) => {
+  // Standalone editor API (the MCP path goes through tools). Everything is
+  // keyed by deck id; there is no server-wide current deck.
+  app.post("/api/decks", (req, res) => {
     try {
-      res.json(deckStore.save(req.body));
+      const html = typeof req.body?.html === "string" ? req.body.html : "";
+      const deck = html.trim()
+        ? deckStore.createFromHtml(html, "user")
+        : req.body?.sample
+          ? deckStore.createSample()
+          : deckStore.createBlank(typeof req.body?.title === "string" ? req.body.title : undefined);
+      res.json(deck);
     } catch (error) {
-      res.status(400).json({
-        error: error instanceof Error ? error.message : "Invalid deck",
-      });
+      res.status(400).json({ error: error instanceof Error ? error.message : "Invalid deck" });
     }
   });
 
-  app.post("/api/deck/reset", (_req, res) => {
-    res.json(deckStore.reset());
-  });
-
-  app.post("/api/deck/html", (req, res) => {
-    const html =
-      typeof req.body === "string"
-        ? req.body
-        : typeof req.body?.html === "string"
-          ? req.body.html
-          : "";
-    if (!html.trim()) {
-      res.status(400).json({ error: "html is required" });
+  app.get("/api/decks/:id", (req, res) => {
+    const deck = deckStore.get(String(req.params.id));
+    if (!deck) {
+      res.status(404).json({ error: "Unknown deck" });
       return;
     }
-    res.json(deckStore.loadHtml(html, "user"));
+    res.json(deck);
   });
 
-  app.get("/export", (req, res) => {
-    const deck = deckStore.get();
-    const html = deckToHtml(deck);
-    if (req.query.download) {
-      sendDeckDownload(res, html, deck.title);
-      return;
+  app.put("/api/decks/:id", (req, res) => {
+    try {
+      res.json(deckStore.save({ ...req.body, id: String(req.params.id) }));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Invalid deck" });
     }
-    res.type("html").send(html);
   });
 
   // Download of an exact snapshot: the editor posts the deck it has on
   // screen, gets a short-lived id back, and opens /download/:id in a new tab.
   // Needed because the MCP host sandbox blocks <a download> inside the iframe.
-  app.post("/api/deck/snapshot", (req, res) => {
+  app.post("/api/snapshots", (req, res) => {
     try {
-      const deck = deckStore.save(req.body);
-      const id = deckStore.snapshot(deck);
+      if (!req.body?.slides?.length) throw new Error("Deck needs at least one slide");
+      const id = deckStore.snapshot(req.body);
       res.json({ id, url: `${publicBaseUrl(req)}/download/${id}` });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : "Invalid deck" });
