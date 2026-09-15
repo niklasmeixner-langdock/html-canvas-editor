@@ -1,18 +1,24 @@
 :root {
   color-scheme: dark;
-  --bg: #1c1c1c;
-  --panel: #2b2b2b;
-  --panel-2: #333;
-  --line: #444;
-  --text: #f3f3f3;
-  --muted: #a3a3a3;
-  --accent: #0d99ff;
-  --accent-soft: #16324a;
-  --danger: #f24822;
-  --canvas: #141414;
-  --handle: #0d99ff;
-  --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
-  font-family: Inter, system-ui, sans-serif;
+  --bg: #13141b;
+  --panel: #1f2026;
+  --panel-2: #25262c;
+  --line: #2b2c32;
+  --line-strong: #37383d;
+  --text: #f5f4f2;
+  --muted: #898a8c;
+  --faint: #727376;
+  --accent: #4469fc;
+  --accent-hover: #6987fd;
+  --accent-soft: rgba(68, 105, 252, 0.16);
+  --danger: #ef4444;
+  --canvas: #13141b;
+  --handle: #4469fc;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font: Inter, "Inter Fallback", Arial, sans-serif;
+  font-family: var(--font);
 }
 
 * {
@@ -31,6 +37,7 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
+  -webkit-font-smoothing: antialiased;
 }
 
 button,
@@ -40,9 +47,24 @@ textarea {
   font: inherit;
 }
 
+button:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
 #app {
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr) 88px;
+  grid-template-rows: 56px minmax(0, 1fr) 92px;
   height: 100%;
   min-height: 0;
 }
@@ -52,9 +74,9 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 0 12px 0 16px;
+  padding: 0 16px 0 18px;
   border-bottom: 1px solid var(--line);
-  background: var(--panel);
+  background: var(--bg);
 }
 
 .brand {
@@ -64,14 +86,15 @@ textarea {
 }
 
 .brand strong {
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 600;
   letter-spacing: -0.02em;
 }
 
 .brand span,
 .status {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .topbar-actions,
@@ -91,23 +114,27 @@ textarea {
 button.btn,
 .tool,
 .layer-actions button {
-  border: 0;
-  border-radius: 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: var(--panel-2);
   color: var(--text);
-  padding: 7px 10px;
+  padding: 7px 12px;
   cursor: pointer;
 }
 
 button.btn:hover,
 .tool:hover,
 .layer-actions button:hover {
-  background: #3d3d3d;
+  background: #2b2c32;
 }
 
 button.btn.primary {
   background: var(--accent);
   color: #fff;
+}
+
+button.btn.primary:hover {
+  background: var(--accent-hover);
 }
 
 button.btn.ghost {
@@ -117,7 +144,7 @@ button.btn.ghost {
 
 .workspace {
   display: grid;
-  grid-template-columns: 176px minmax(0, 1fr) 220px;
+  grid-template-columns: 188px minmax(0, 1fr) 228px;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -125,10 +152,10 @@ button.btn.ghost {
 
 .rail,
 .props {
-  background: var(--panel);
+  background: var(--bg);
   border-right: 1px solid var(--line);
   overflow: auto;
-  padding: 12px;
+  padding: 16px 14px;
 }
 
 .props {
@@ -139,34 +166,34 @@ button.btn.ghost {
 .rail h2,
 .props h2,
 .filmstrip h2 {
-  margin: 0 0 8px;
-  color: var(--muted);
+  margin: 0 0 10px;
+  color: var(--faint);
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-weight: 500;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .tool-list {
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .tool {
-  flex: 1 1 30%;
-  min-width: 64px;
+  flex: 1 1 40%;
+  min-width: 72px;
   display: grid;
   justify-items: center;
   gap: 4px;
-  padding: 8px 6px;
+  padding: 10px 6px;
   font-size: 11px;
   color: var(--muted);
 }
 
 .tool.active {
   background: var(--accent-soft);
-  color: #fff;
-  outline: 1px solid var(--accent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .tool svg {
@@ -185,13 +212,17 @@ button.btn.ghost {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 7px 8px;
+  padding: 8px 10px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   text-align: left;
   cursor: pointer;
+}
+
+.layer:hover {
+  background: var(--panel-2);
 }
 
 .layer[data-active="true"] {
@@ -208,7 +239,8 @@ button.btn.ghost {
   position: relative;
   min-width: 0;
   min-height: 0;
-  background: var(--canvas);
+  background:
+    radial-gradient(circle at 50% 45%, #1a1b23 0%, var(--canvas) 70%);
   overflow: hidden;
 }
 
@@ -235,6 +267,7 @@ button.btn.ghost {
   width: 1920px;
   height: 1080px;
   overflow: hidden;
+  border-radius: 4px;
   box-shadow: var(--shadow);
 }
 
@@ -266,12 +299,13 @@ button.btn.ghost {
 .el.editing {
   z-index: 4;
   outline: 2px solid var(--accent);
+  border-radius: 4px;
 }
 
 .el.editing .text {
   user-select: text;
   cursor: text;
-  caret-color: #0d99ff;
+  caret-color: var(--accent);
 }
 
 .image-ph {
@@ -279,7 +313,7 @@ button.btn.ghost {
   place-items: center;
   width: 100%;
   height: 100%;
-  color: #64748b;
+  color: var(--muted);
   font-size: 22px;
 }
 
@@ -357,24 +391,24 @@ button.btn.ghost {
 
 .props .field {
   display: grid;
-  gap: 4px;
-  margin-bottom: 10px;
+  gap: 6px;
+  margin-bottom: 12px;
 }
 
 .props label {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .props input,
 .props select,
 .props textarea {
   width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #1f1f1f;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
   color: var(--text);
-  padding: 7px 8px;
+  padding: 8px 10px;
 }
 
 .props textarea {
@@ -392,9 +426,9 @@ button.btn.ghost {
   display: flex;
   align-items: stretch;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-top: 1px solid var(--line);
-  background: var(--panel);
+  background: var(--bg);
   overflow-x: auto;
 }
 
@@ -409,9 +443,9 @@ button.btn.ghost {
   width: 128px;
   height: 64px;
   padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #111;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
   overflow: hidden;
   cursor: pointer;
   position: relative;
@@ -419,15 +453,18 @@ button.btn.ghost {
 
 .thumb[data-active="true"] {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .thumb span {
   position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 8px;
-  color: #111;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(19, 20, 27, 0.72);
+  color: var(--text);
   font-size: 11px;
   text-align: center;
 }
@@ -435,15 +472,20 @@ button.btn.ghost {
 .add-slide {
   width: 72px;
   height: 64px;
-  border: 1px dashed var(--line);
-  border-radius: 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 
+.add-slide:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 .empty-props {
   color: var(--muted);
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.5;
 }
