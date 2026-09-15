@@ -1,0 +1,19 @@
+.gitignore
+  s_b0d5b3bbb45194::t_ab33f268bc5298 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "34798283499f04d15378b53732bfb21665a26c1c",
+  "prompts": {},
+  "sessions": {
+    "s_b0d5b3bbb45194": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "ea5da182-9701-4bbd-af65-d0034d947aae",
+        "model": "grok-4.6"
+      },
+      "human_author": "Niklas Meixner <niklasmeixner@MacBook-Pro-von-Niklas.local>"
+    }
+  }
+}
