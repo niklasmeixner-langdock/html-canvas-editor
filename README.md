@@ -60,7 +60,15 @@ frame) using computed layout, so any slide becomes editable — not just decks
 exported from here. Inside Langdock's sandbox a nested iframe is opaque, so the
 flatten runs in a Shadow DOM container instead. Translucent colours, gradients
 and opacity are preserved; hidden "presentation mode" slides are recovered;
-nav/controls are dropped; iframe shell pages are unwrapped.
+nav/controls are dropped; iframe shell pages are unwrapped; inline `<svg>`
+becomes an image layer with its computed colours baked in.
+
+The shadow container has to stand in for the document: `:root`, `html` and
+`body` selectors are rewritten to the wrapper (otherwise every `var(--…)`
+defined on `:root` silently falls back and the deck loses its theme),
+`<html>`/`<body>` attributes such as `data-theme` are copied over, `vw`/`vh`
+are pinned to 1920×1080 and `rem` to the deck's own `html { font-size }`.
+Known gap: `::before`/`::after` pseudo-elements are not captured.
 
 Layout is measured only after stylesheets, webfonts and images have loaded,
 with every entrance animation jumped to its final keyframe (otherwise staggered

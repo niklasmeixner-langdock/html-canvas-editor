@@ -45,6 +45,38 @@ function paintedBackground(style: CSSStyleDeclaration): string {
   return "";
 }
 
+/**
+ * Serialise an inline <svg> with its computed colour, fill and stroke baked in
+ * (they normally come from CSS/`currentColor`, which a data URI cannot see).
+ */
+function svgToDataUri(el: SVGSVGElement, style: CSSStyleDeclaration, rect: DOMRect): string {
+  const clone = el.cloneNode(true) as SVGSVGElement;
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  clone.setAttribute("width", String(Math.round(rect.width)));
+  clone.setAttribute("height", String(Math.round(rect.height)));
+  if (!clone.getAttribute("viewBox")) clone.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
+  clone.removeAttribute("class");
+  clone.setAttribute("color", style.color);
+  if (!clone.hasAttribute("fill") && style.fill) clone.setAttribute("fill", style.fill);
+  if (!clone.hasAttribute("stroke") && style.stroke && style.stroke !== "none") clone.setAttribute("stroke", style.stroke);
+  if (!clone.hasAttribute("stroke-width") && style.strokeWidth) clone.setAttribute("stroke-width", style.strokeWidth);
+  // Class-styled children lose their CSS in the data URI; bake computed paint in.
+  const originals = el.querySelectorAll<SVGElement>("*");
+  clone.querySelectorAll<SVGElement>("*").forEach((node, index) => {
+    const source = originals[index];
+    if (!source || node.tagName === "title" || node.tagName === "desc") return;
+    node.removeAttribute("class");
+    const computed = getComputedStyle(source);
+    for (const prop of ["fill", "stroke", "stroke-width", "opacity", "fill-opacity", "stroke-opacity"] as const) {
+      const value = computed.getPropertyValue(prop);
+      if (value && !node.hasAttribute(prop)) node.setAttribute(prop, value);
+    }
+  });
+  const markup = new XMLSerializer().serializeToString(clone).replaceAll("currentColor", style.color);
+  if (markup.length > 200_000) return "";
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`;
+}
+
 function mapRect(
   rect: DOMRect,
   root: DOMRect,
@@ -99,6 +131,23 @@ function flattenSlideEl(root: Element, index: number): Slide {
         src: el.src,
         objectFit: (style.objectFit as SlideComponent["objectFit"]) || "cover",
       });
+      return;
+    }
+
+    // Inline icons/illustrations become image layers; text inside is skipped.
+    if (el instanceof SVGSVGElement) {
+      const src = svgToDataUri(el, style, rect);
+      if (src) {
+        add({
+          id: uid("image"),
+          type: "image",
+          name: el.getAttribute("aria-label") || el.querySelector("title")?.textContent?.trim() || "Icon",
+          ...box,
+          opacity: round(opacity),
+          src,
+          objectFit: "contain",
+        });
+      }
       return;
     }
 
@@ -328,12 +377,23 @@ async function flattenViaIframe(html: string): Promise<Deck | null> {
   }
 }
 
-/** Scope `html`/`body` selectors to the wrapper and pin viewport units to 1920×1080. */
+/**
+ * Scope `:root`/`html`/`body` selectors to the wrapper and pin viewport units
+ * to 1920×1080. `:root` matters most: in a shadow tree it matches nothing, so
+ * every `var(--…)` a deck defines there would silently fall back (white slide,
+ * black text, no accents).
+ */
 function rewriteCss(css: string): string {
   return css
+    .replace(/:root\b/g, ".__body")
     .replace(/(^|[\s,}>~+])(html|body)(?=[\s,{.:#[>~+])/g, "$1.__body")
     .replace(/(\d*\.?\d+)vw\b/g, (_, n: string) => `${(Number(n) * 19.2).toFixed(2)}px`)
     .replace(/(\d*\.?\d+)vh\b/g, (_, n: string) => `${(Number(n) * 10.8).toFixed(2)}px`);
+}
+
+/** `rem` resolves against the page, not the wrapper; pin it to the deck's root size. */
+function rewriteRem(css: string, rootPx: number): string {
+  return css.replace(/(\d*\.?\d+)rem\b/g, (_, n: string) => `${(Number(n) * rootPx).toFixed(2)}px`);
 }
 
 /**
@@ -377,10 +437,17 @@ async function flattenViaShadow(html: string): Promise<Deck> {
     freeze.textContent = FREEZE_CSS;
     shadow.append(freeze);
 
+    // The wrapper stands in for both <html> and <body>: theme switches live on
+    // either (`<html data-theme="dark">`, `<body class="dark">`).
     const wrapper = document.createElement("div");
-    wrapper.className = `__body ${parsed.body.className}`.trim();
-    const bodyStyle = parsed.body.getAttribute("style");
-    if (bodyStyle) wrapper.setAttribute("style", rewriteCss(bodyStyle));
+    const htmlEl = parsed.documentElement;
+    wrapper.className = `__body ${htmlEl.className} ${parsed.body.className}`.trim();
+    for (const attr of [...htmlEl.attributes, ...parsed.body.attributes]) {
+      if (attr.name === "class" || attr.name === "style" || attr.name === "lang") continue;
+      wrapper.setAttribute(attr.name, attr.value);
+    }
+    const inlineRoot = [htmlEl.getAttribute("style"), parsed.body.getAttribute("style")].filter(Boolean).join(";");
+    if (inlineRoot) wrapper.setAttribute("style", rewriteCss(inlineRoot));
     wrapper.innerHTML = parsed.body.innerHTML;
     // Inline vw/vh on elements too.
     wrapper.querySelectorAll<HTMLElement>("[style]").forEach((el) => {
@@ -388,6 +455,19 @@ async function flattenViaShadow(html: string): Promise<Deck> {
       if (/\d(vw|vh)\b/.test(inline)) el.setAttribute("style", rewriteCss(inline));
     });
     shadow.append(wrapper);
+
+    // Decks that scale type with `html { font-size: … }` + rem: the wrapper now
+    // carries the html rules, so its font-size is the intended root size.
+    const rootPx = Number.parseFloat(getComputedStyle(wrapper).fontSize) || 16;
+    if (Math.abs(rootPx - 16) > 0.05) {
+      shadow.querySelectorAll("style").forEach((style) => {
+        if (style.textContent?.includes("rem")) style.textContent = rewriteRem(style.textContent, rootPx);
+      });
+      wrapper.querySelectorAll<HTMLElement>("[style]").forEach((el) => {
+        const inline = el.getAttribute("style") ?? "";
+        if (/\drem\b/.test(inline)) el.setAttribute("style", rewriteRem(inline, rootPx));
+      });
+    }
 
     await waitForAssets(shadow, document);
     const deck = emptyDeck(parsed.title || "Imported deck");
