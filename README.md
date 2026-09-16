@@ -70,6 +70,13 @@ defined on `:root` silently falls back and the deck loses its theme),
 are pinned to 1920×1080 and `rem` to the deck's own `html { font-size }`.
 Known gap: `::before`/`::after` pseudo-elements are not captured.
 
+Interactive presentation files (stage + thumbnail rail + nav script) are
+handled as decks, not as apps: thumbnails and rails are excluded (by ancestor
+and by geometry — a slide is big and roughly 16:9), every slide gets the
+`active`/`current`-style classes its script would have added so gated content
+shows, per-word reveal `<span>`s collapse back into one heading, and type is
+scaled with the geometry when the stage is narrower than 1920px.
+
 Layout is measured only after stylesheets, webfonts and images have loaded,
 with every entrance animation jumped to its final keyframe (otherwise staggered
 fade-ups produce faint, displaced layers). The deck's webfont CSS

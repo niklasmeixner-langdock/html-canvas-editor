@@ -22,6 +22,23 @@ function visibleText(el: Element): string {
   return (el.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
+/** A leaf inline child that only carries text and inherits its parent's type. */
+function isPlainInline(child: Element, parent: CSSStyleDeclaration): boolean {
+  if (child.tagName === "BR" || child.tagName === "WBR") return true;
+  if (child.children.length) return false;
+  if (!["SPAN", "B", "STRONG", "I", "EM", "MARK", "SMALL"].includes(child.tagName)) return false;
+  const style = getComputedStyle(child);
+  if (!style.display.startsWith("inline")) return false;
+  return (
+    style.color === parent.color &&
+    style.fontSize === parent.fontSize &&
+    style.fontWeight === parent.fontWeight &&
+    style.fontFamily === parent.fontFamily &&
+    style.fontStyle === parent.fontStyle &&
+    isTransparent(style.backgroundColor)
+  );
+}
+
 function urlFromCss(value: string): string {
   const match = value.match(/url\((['"]?)(.*?)\1\)/i);
   return match?.[2] ?? "";
@@ -94,6 +111,9 @@ function mapRect(
 function flattenSlideEl(root: Element, index: number): Slide {
   const slide = emptySlide(`Slide ${index + 1}`);
   const rootRect = root.getBoundingClientRect();
+  // Geometry is mapped onto 1920×1080; type and radii must scale with it or a
+  // slide rendered at 1680px (rail beside it) gets boxes that outgrow their text.
+  const scale = SLIDE_WIDTH / Math.max(rootRect.width, 1);
   const rootStyle = getComputedStyle(root);
   const rootBackground = paintedBackground(rootStyle);
   if (rootBackground) slide.background = rootBackground;
@@ -171,7 +191,7 @@ function flattenSlideEl(root: Element, index: number): Slide {
         ...box,
         opacity: round(opacity),
         background,
-        borderRadius: Number.parseFloat(style.borderRadius) || 0,
+        borderRadius: (Number.parseFloat(style.borderRadius) || 0) * scale,
         border:
           style.borderWidth !== "0px" && style.borderStyle !== "none"
             ? `${style.borderWidth} ${style.borderStyle} ${style.borderColor}`
@@ -179,14 +199,18 @@ function flattenSlideEl(root: Element, index: number): Slide {
       });
     }
 
-    const children = [...el.children];
+    let children = [...el.children];
+    // Word-by-word reveal markup (`<h1><span>Make</span> <span>AI</span>…`)
+    // is one heading: keep it as one layer so wrapping and order survive.
+    // Spans styled differently (an accent word) stay their own layer.
+    if (children.length && children.every((child) => isPlainInline(child, style))) children = [];
     let text = children.length === 0 ? visibleText(el) : ownText(el);
     if (text) {
       // Bake text-transform in: the editor renders the string as-is, and case
       // changes the width, so it must be measured and rendered the same way.
       if (style.textTransform === "uppercase") text = text.toUpperCase();
       else if (style.textTransform === "lowercase") text = text.toLowerCase();
-      const letterSpacing = Number.parseFloat(style.letterSpacing);
+      const letterSpacing = Number.parseFloat(style.letterSpacing) * scale;
       add({
         id: uid("text"),
         type: "text",
@@ -195,7 +219,7 @@ function flattenSlideEl(root: Element, index: number): Slide {
         ...box,
         opacity: round(opacity),
         text,
-        fontSize: Math.max(12, Math.round(Number.parseFloat(style.fontSize) || 24)),
+        fontSize: Math.max(12, Math.round((Number.parseFloat(style.fontSize) || 24) * scale)),
         fontWeight: Number.parseInt(style.fontWeight, 10) || 400,
         fontFamily: style.fontFamily,
         color: cssColorValue(style.color),
@@ -241,9 +265,38 @@ const SLIDE_SELECTOR =
   ".slide, section.slide, [data-slide], section[class*='slide'], div[class*='slide-'], div[class*='-slide']";
 const CHROME_SELECTOR =
   "nav, header.controls, .controls, .nav, .navigation, .progress, .progress-bar, .toolbar, .pagination, button";
+/** Slide overview rails, minimaps, thumbnails: copies of slides that are not slides. */
+const THUMB_ANCESTOR =
+  "aside, nav, .rail, .sidebar, .sidenav, .overview, .thumbs, .thumbnails, .minimap, [class*='thumb'], [class*='overview'], [class*='preview'], [class*='minimap'], [class*='mini-'], [class*='-mini']";
+/**
+ * Decks reveal content with classes their script toggles. Scripts do not run
+ * in the import, so give every slide the usual "current" markers up front.
+ */
+const STATE_CLASSES = [
+  "active",
+  "is-active",
+  "current",
+  "is-current",
+  "visible",
+  "is-visible",
+  "show",
+  "shown",
+  "in-view",
+  "revealed",
+  "is-revealed",
+  "animate",
+  "animated",
+  "loaded",
+  "ready",
+];
+const PAGE_STATE_CLASSES = ["js", "loaded", "is-loaded", "ready", "is-ready", "fonts-loaded"];
 
 /** Slides in "presentation mode" decks are hidden until active; show them all. */
 function forceVisible(el: Element) {
+  el.classList.add(...STATE_CLASSES);
+  el.removeAttribute("hidden");
+  el.removeAttribute("inert");
+  if (el.getAttribute("aria-hidden") === "true") el.setAttribute("aria-hidden", "false");
   const style = (el as HTMLElement).style;
   style.display = getComputedStyle(el).display === "none" ? "block" : style.display;
   style.visibility = "visible";
@@ -255,18 +308,36 @@ function forceVisible(el: Element) {
   style.left = style.top = "auto";
 }
 
+function isSlideSized(el: Element): boolean {
+  const rect = el.getBoundingClientRect();
+  return rect.width >= 480 && rect.height >= 200;
+}
+
+function isWidescreen(el: Element): boolean {
+  const rect = el.getBoundingClientRect();
+  const aspect = rect.width / Math.max(rect.height, 1);
+  return aspect > 1.5 && aspect < 2.1;
+}
+
 function collectSlideRoots(scope: ParentNode & { children: HTMLCollection }): Element[] {
   const matches = [...scope.querySelectorAll(SLIDE_SELECTOR)].filter(
-    (el) => !el.matches(CHROME_SELECTOR) && !el.closest(CHROME_SELECTOR),
+    (el) => !el.matches(CHROME_SELECTOR) && !el.closest(CHROME_SELECTOR) && !el.closest(THUMB_ANCESTOR),
   );
   // Outermost matches only: a `.slide` wrapper often contains `.slide-content`.
   const outermost = matches.filter((el) => !matches.some((other) => other !== el && other.contains(el)));
   if (outermost.length) {
     outermost.forEach(forceVisible);
-    return outermost;
+    // Geometry decides between real slides and same-class thumbnails: a slide
+    // is big and roughly 16:9. Fall back gently when a deck sizes oddly.
+    const sized = outermost.filter(isSlideSized);
+    const widescreen = sized.filter(isWidescreen);
+    return widescreen.length ? widescreen : sized.length ? sized : outermost;
   }
   const children = [...scope.children].filter(
-    (el) => !["SCRIPT", "STYLE", "LINK", "TEMPLATE"].includes(el.tagName) && !el.matches(CHROME_SELECTOR),
+    (el) =>
+      !["SCRIPT", "STYLE", "LINK", "TEMPLATE"].includes(el.tagName) &&
+      !el.matches(CHROME_SELECTOR) &&
+      !el.matches(THUMB_ANCESTOR),
   );
   children.forEach(forceVisible);
   // Drop zero-size leftovers (empty wrappers, hidden helpers).
@@ -366,6 +437,7 @@ async function flattenViaIframe(html: string): Promise<Deck | null> {
     const freeze = imported.createElement("style");
     freeze.textContent = FREEZE_CSS;
     imported.head.append(freeze);
+    imported.body.classList.add(...PAGE_STATE_CLASSES);
     await waitForAssets(imported, imported);
     const deck = emptyDeck(imported.title || "Imported deck");
     deck.source = "user";
@@ -413,8 +485,11 @@ async function flattenViaShadow(html: string): Promise<Deck> {
     const shadow = host.attachShadow({ mode: "open" });
 
     const reset = document.createElement("style");
+    // The transform makes the wrapper the containing block for `position:
+    // fixed` descendants (counters, logos), which would otherwise position
+    // against the real viewport and land off-slide.
     reset.textContent =
-      ":host{all:initial;display:block}.__body{position:relative;width:1920px;min-height:1080px;margin:0;font-family:Inter,system-ui,sans-serif}";
+      ":host{all:initial;display:block}.__body{position:relative;width:1920px;min-height:1080px;margin:0;transform:translateZ(0);font-family:Inter,system-ui,sans-serif}";
     shadow.append(reset);
 
     parsed.querySelectorAll('link[rel~="stylesheet"]').forEach((link) => {
@@ -454,6 +529,8 @@ async function flattenViaShadow(html: string): Promise<Deck> {
       const inline = el.getAttribute("style") ?? "";
       if (/\d(vw|vh)\b/.test(inline)) el.setAttribute("style", rewriteCss(inline));
     });
+    // Scripts usually flag the page once booted (`body.loaded`, `.ready`).
+    wrapper.classList.add(...PAGE_STATE_CLASSES);
     shadow.append(wrapper);
 
     // Decks that scale type with `html { font-size: … }` + rem: the wrapper now
