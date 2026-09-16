@@ -202,9 +202,14 @@ button.btn.ghost:hover {
   height: 15px;
 }
 
+#app {
+  --rail-w: 176px;
+  --props-w: 224px;
+}
+
 .workspace {
   display: grid;
-  grid-template-columns: 176px minmax(0, 1fr) 224px;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--props-w);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -356,51 +361,113 @@ button.btn.ghost:hover {
   letter-spacing: 0.04em;
 }
 
-/* Narrow hosts (MCP inline card): icon-only tool rail, slimmer props */
-@media (max-width: 900px) {
-  .workspace {
-    grid-template-columns: 44px minmax(0, 1fr) 196px;
-  }
-  .rail {
-    padding: 8px 6px;
-  }
-  .rail h2,
-  .rail .layers,
-  .rail-head .layer-actions,
-  .tool span,
-  .tool kbd {
-    display: none;
-  }
-  .tool {
-    justify-content: center;
-    padding: 0;
-  }
-  .brand span {
-    display: none;
-  }
-  .topbar-actions .ghost,
-  .topbar-actions .sep {
-    display: none;
-  }
+/*
+ * Layout is driven by data attributes on #app, set in mcp-app.ts from the
+ * host display mode (inline card / side panel / full screen) and the width:
+ *   data-rail  = full | compact | hidden   (tools + layers)
+ *   data-props = full | compact | hidden   (properties)
+ *   data-mode  = inline | pip | fullscreen | standalone
+ *   data-narrow = 1 below 900px (trim the top bar)
+ */
+.rail {
+  grid-column: 1;
+}
+.viewport-wrap {
+  grid-column: 2;
+}
+.props {
+  grid-column: 3;
 }
 
-@media (max-width: 560px) {
-  .workspace {
-    grid-template-columns: minmax(0, 1fr) 176px;
-  }
-  .rail {
-    display: none;
-  }
-  #app {
-    grid-template-rows: 44px minmax(0, 1fr) 72px;
-  }
-  .thumb {
-    width: 88px;
-    height: 50px;
-  }
-  .add-slide {
-    height: 50px;
-  }
+#app[data-rail="compact"] {
+  --rail-w: 44px;
+}
+#app[data-rail="compact"] .rail {
+  padding: 8px 6px;
+}
+#app[data-rail="compact"] .rail h2,
+#app[data-rail="compact"] .rail .layers,
+#app[data-rail="compact"] .rail-head .layer-actions,
+#app[data-rail="compact"] .tool span,
+#app[data-rail="compact"] .tool kbd {
+  display: none;
+}
+#app[data-rail="compact"] .tool {
+  justify-content: center;
+  padding: 0;
+}
+#app[data-rail="hidden"] {
+  --rail-w: 0px;
+}
+#app[data-rail="hidden"] .rail {
+  display: none;
+}
+
+#app[data-props="compact"] {
+  --props-w: 196px;
+}
+#app[data-props="hidden"] {
+  --props-w: 0px;
+}
+#app[data-props="hidden"] .props {
+  display: none;
+}
+
+#app[data-narrow="1"] .brand span,
+#app[data-narrow="1"] .topbar-actions .ghost,
+#app[data-narrow="1"] .topbar-actions .sep {
+  display: none;
+}
+
+/* Side panel: panel toggle + full screen live in the top bar. */
+#panels-btn,
+#maximize-btn {
+  display: none;
+}
+#app[data-mode="pip"] #panels-btn,
+#app[data-mode="pip"] #maximize-btn {
+  display: inline-flex;
+}
+button.btn.icon {
+  width: 30px;
+  padding: 0;
+  color: var(--muted);
+}
+button.btn.icon svg {
+  width: 16px;
+  height: 16px;
+}
+button.btn.icon:hover,
+button.btn.icon[aria-pressed="true"] {
+  color: var(--text);
+}
+button.btn.icon[aria-pressed="true"] {
+  background: var(--panel-2);
+  border-color: #45464c;
+}
+
+/* Inline chat card: slides only. */
+#app[data-mode="inline"] {
+  grid-template-rows: 40px minmax(0, 1fr) 68px;
+}
+#app[data-mode="inline"] .topbar-actions .btn:not(#download-btn) {
+  display: none;
+}
+#app[data-mode="inline"] .brand span {
+  display: none;
+}
+#app[data-mode="inline"] .thumb {
+  width: 80px;
+  height: 45px;
+}
+#app[data-mode="inline"] .add-slide {
+  height: 45px;
+}
+
+/* Small standalone windows */
+#app[data-rail="hidden"][data-mode="standalone"],
+#app[data-rail="hidden"][data-mode="fullscreen"] {
+  grid-template-rows: 44px minmax(0, 1fr) 72px;
 }
 
 .viewport-wrap {

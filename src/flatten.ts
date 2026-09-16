@@ -141,7 +141,8 @@ function flattenSlideEl(root: Element, index: number): Slide {
       add({
         id: uid("text"),
         type: "text",
-        name: el.getAttribute("data-slot") || el.tagName.toLowerCase(),
+        // Layer list shows this; the text itself beats "div"/"span".
+        name: el.getAttribute("data-slot") || (text.length > 28 ? `${text.slice(0, 27)}…` : text),
         ...box,
         opacity: round(opacity),
         text,

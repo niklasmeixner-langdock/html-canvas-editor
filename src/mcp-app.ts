@@ -18,8 +18,64 @@ const standalone = window.self === window.top || location.search.includes("stand
 // Absolute URL of our server. Injected by server.ts for the hosted case; in
 // standalone mode it is simply where we were loaded from.
 const serverBase = (window.__CANVAS_BASE__ || (standalone ? location.origin : "")).replace(/\/$/, "");
-const app = new App({ name: "HTML slide canvas", version: "0.1.0" });
-const editor = new SlideEditor(document.getElementById("app")!, sampleDeck());
+// autoResize measures the document at max-content, which for a 100%-height
+// grid is meaningless; the app reports its own size per display mode below.
+const app = new App({ name: "HTML slide canvas", version: "0.1.0" }, {}, { autoResize: false });
+const appRoot = document.getElementById("app")!;
+const editor = new SlideEditor(appRoot, sampleDeck());
+
+/**
+ * Three hosted surfaces (MCP Apps display modes) plus the standalone page:
+ * - inline: the chat card. Slides only: canvas + filmstrip, no panels.
+ * - pip: the chat side panel. Panels start minimised (icon tools, no props)
+ *   and can be expanded; Full screen is one click away.
+ * - fullscreen / standalone: the full editor, panels adapt to width.
+ */
+type Mode = "inline" | "pip" | "fullscreen" | "standalone";
+const INLINE_HEIGHT = 600; // the host's cap for inline cards
+let mode: Mode = standalone ? "standalone" : "inline";
+let panelsOpen = false;
+
+function applyLayout() {
+  const width = window.innerWidth;
+  let rail: "full" | "compact" | "hidden";
+  let props: "full" | "compact" | "hidden";
+  if (mode === "inline") {
+    rail = "hidden";
+    props = "hidden";
+  } else if (mode === "pip" && !panelsOpen) {
+    rail = "compact";
+    props = "hidden";
+  } else if (width < 560) {
+    rail = "hidden";
+    props = "compact";
+  } else if (width < 900) {
+    rail = "compact";
+    props = "compact";
+  } else {
+    rail = "full";
+    props = "full";
+  }
+  appRoot.dataset.mode = mode;
+  appRoot.dataset.rail = rail;
+  appRoot.dataset.props = props;
+  appRoot.dataset.narrow = width < 900 ? "1" : "0";
+  const panelsBtn = document.getElementById("panels-btn")!;
+  panelsBtn.setAttribute("aria-pressed", String(panelsOpen));
+  panelsBtn.title = panelsOpen ? "Hide panels" : "Show panels";
+  editor.wheelPans = mode !== "inline";
+  editor.refit();
+}
+
+function setMode(next: Mode) {
+  if (next === mode) return;
+  mode = next;
+  applyLayout();
+  if (mode === "inline") void app.sendSizeChanged({ width: window.innerWidth, height: INLINE_HEIGHT });
+}
+
+window.addEventListener("resize", applyLayout);
+applyLayout();
 
 function setStatus(text: string) {
   editor.status = text;
@@ -237,10 +293,6 @@ async function downloadHtml() {
   );
 }
 
-async function openHtmlFile(file: File) {
-  await editor.importHtml(await file.text());
-}
-
 document.getElementById("save-btn")!.addEventListener("click", () => {
   void save().catch((error) => setStatus(error instanceof Error ? error.message : "Save failed"));
 });
@@ -253,15 +305,20 @@ document.getElementById("copy-btn")!.addEventListener("click", () => {
 document.getElementById("download-btn")!.addEventListener("click", () => {
   void downloadHtml().catch((error) => setStatus(error instanceof Error ? error.message : "Download failed"));
 });
-document.getElementById("open-btn")!.addEventListener("click", () => {
-  document.getElementById("html-file")!.click();
+document.getElementById("panels-btn")!.addEventListener("click", () => {
+  panelsOpen = !panelsOpen;
+  applyLayout();
 });
-document.getElementById("html-file")!.addEventListener("change", () => {
-  const input = document.getElementById("html-file") as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = "";
-  if (file) void openHtmlFile(file).catch((error) => setStatus(error instanceof Error ? error.message : "Import failed"));
+document.getElementById("maximize-btn")!.addEventListener("click", () => {
+  void app
+    .requestDisplayMode({ mode: "fullscreen" })
+    .then((result) => setMode(result.mode))
+    .catch(() => setStatus("Host did not allow full screen"));
 });
+
+app.onhostcontextchanged = (context) => {
+  if (context.displayMode) setMode(context.displayMode);
+};
 
 app.ontoolresult = (result) => {
   const deck = deckFromToolResult(result);
@@ -288,8 +345,15 @@ async function start() {
     await loadStandalone();
     return;
   }
-  app.connect();
   editor.status = "Waiting for host…";
+  await app.connect();
+  setMode(app.getHostContext()?.displayMode ?? "inline");
+  // The host shows a loader until the first size report. Inline it also sizes
+  // the card from it; side panel and full screen own their size.
+  void app.sendSizeChanged({
+    width: window.innerWidth,
+    height: mode === "inline" ? INLINE_HEIGHT : window.innerHeight,
+  });
 }
 
 void start().catch((error) => {

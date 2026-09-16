@@ -77,8 +77,23 @@ export wrap text exactly like the source did; `letter-spacing` and
 - Insert **text**, **image**, or **frame**
 - Drag to move, handles to resize, double-click text to edit
 - Layers, undo (`⌘Z`), duplicate (`⌘D`), arrow-key nudge
-- Open or drop an existing `.html` slide — layers become editable
-- Copy or download HTML. Deck JSON is embedded so the next `load_html` round-trips.
+- Existing decks come in through chat (`open_slide_canvas` with the attached
+  file); there is deliberately no in-app file picker
+- Copy or download HTML. Deck JSON is embedded so a re-import round-trips.
+
+### Surfaces
+
+The app reads the host's MCP Apps display mode and lays itself out per surface
+(`data-mode` on `#app`, see `mcp-app.ts`):
+
+- **inline** (chat card): slides only — canvas, filmstrip, Download. Plain
+  scroll is left to the chat (a stray wheel used to pan the slide out of view);
+  ⌘/Ctrl+scroll still zooms. The app reports a 600px height, the host's cap.
+- **pip** (side panel): panels start minimised (icon tools, no properties).
+  The top bar gets a panel toggle and a Full screen button
+  (`ui/request-display-mode`).
+- **fullscreen** / standalone: the full editor; below 900px the rail goes
+  icon-only, below 560px it hides.
 
 ## Run locally
 

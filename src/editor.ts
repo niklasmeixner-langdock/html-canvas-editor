@@ -46,6 +46,8 @@ export class SlideEditor {
   private editing = false;
   private spaceDown = false;
   private userZoomed = false;
+  /** Whether plain wheel/trackpad scroll pans the canvas (off for inline cards). */
+  wheelPans = true;
   private pendingImageId: string | null = null;
   private flattening = false;
   /** Manual double-click tracking: re-rendering the slide between clicks
@@ -91,6 +93,12 @@ export class SlideEditor {
     return structuredClone(this.deck);
   }
 
+  /** The surface changed (display mode, panels): fit the slide again. */
+  refit() {
+    this.userZoomed = false;
+    requestAnimationFrame(() => this.fit());
+  }
+
   /** Server assigned (or confirmed) the id this deck is stored under. */
   adoptId(id: string) {
     this.deck.id = id;
@@ -99,16 +107,6 @@ export class SlideEditor {
 
   exportHtml(): string {
     return deckToHtml(this.getDeck());
-  }
-
-  async importHtml(html: string) {
-    this.status = "Importing…";
-    this.renderStatus();
-    const flattened = await flattenHtmlDocument(html);
-    // Same deck, new content: keep the id so saves stay in place.
-    flattened.id = this.deck.id;
-    this.setDeck(flattened, `Imported ${flattened.slides.length} slide${flattened.slides.length === 1 ? "" : "s"}`);
-    this.onChange?.(this.getDeck());
   }
 
   private async flattenImported() {
@@ -197,6 +195,9 @@ export class SlideEditor {
     viewport.addEventListener(
       "wheel",
       (event) => {
+        // Inline in a chat the card must not swallow the page scroll (and a
+        // stray wheel would pan the slide out of view); only zoom gestures act.
+        if (!this.wheelPans && !(event.ctrlKey || event.metaKey)) return;
         event.preventDefault();
         this.userZoomed = true;
         // Figma conventions: scroll/two-finger pans, ⌘/Ctrl+scroll and pinch
@@ -434,12 +435,7 @@ export class SlideEditor {
   private async onDrop(event: DragEvent) {
     event.preventDefault();
     const file = event.dataTransfer?.files?.[0];
-    if (!file) return;
-    if (file.name.endsWith(".html") || file.name.endsWith(".htm") || file.type === "text/html") {
-      await this.importHtml(await file.text());
-      return;
-    }
-    if (!file.type.startsWith("image/")) return;
+    if (!file?.type.startsWith("image/")) return;
     const point = this.clientToSlide(event);
     const created = this.placeComponent("image", point.x, point.y, false);
     this.pendingImageId = created.id;
@@ -818,7 +814,7 @@ export class SlideEditor {
         <div class="field"><label>Name</label><input id="slide-name" value="${escape(this.current().name)}" /></div>
         <div class="field"><label>Background</label><input id="slide-bg" type="color" value="${cssColorToHex(this.current().background)}" /></div>
         <div class="field"><label>Deck title</label><input id="deck-name" value="${escape(this.deck.title)}" /></div>
-        <p class="empty-props">Click a layer to edit. Double-click or press Enter to change text. Open HTML to reuse an existing slide.</p>
+        <p class="empty-props">Click a layer to edit. Double-click or press Enter to change text. Attach an .html deck in chat to edit it here.</p>
       `;
       this.bindField("slide-name", (value) => {
         this.current().name = value;

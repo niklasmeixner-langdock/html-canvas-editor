@@ -22,10 +22,16 @@
           <button class="btn ghost" id="fit-btn" type="button">Fit</button>
           <button class="btn ghost" id="reset-btn" type="button">Reset</button>
           <span class="sep"></span>
-          <button class="btn" id="open-btn" type="button">Open HTML</button>
           <button class="btn" id="copy-btn" type="button">Copy</button>
           <button class="btn" id="download-btn" type="button">Download</button>
           <button class="btn primary" id="save-btn" type="button">Save</button>
+          <!-- Side panel only: toggle the tool/layer/props panels, or go full screen. -->
+          <button class="btn icon" id="panels-btn" type="button" title="Show panels" aria-label="Show panels" aria-pressed="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M9 5v14M15 5v14" /></svg>
+          </button>
+          <button class="btn icon" id="maximize-btn" type="button" title="Full screen" aria-label="Full screen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" /></svg>
+          </button>
         </div>
       </header>
       <div class="workspace">
@@ -94,7 +100,6 @@
         <button class="add-slide" id="add-slide" type="button" title="Add slide" aria-label="Add slide">+</button>
       </div>
       <input id="file" type="file" accept="image/*" hidden />
-      <input id="html-file" type="file" accept=".html,.htm,text/html" hidden />
     </div>
     <!-- Replaced by the MCP server with its public URL when served as an app resource. -->
     <script>window.__CANVAS_BASE__="";</script>
