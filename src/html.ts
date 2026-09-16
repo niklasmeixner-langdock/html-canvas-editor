@@ -49,8 +49,11 @@ function renderComponent(component: SlideComponent): string {
       `color:${component.color ?? "#111827"}`,
       `text-align:${component.textAlign ?? "left"}`,
       `line-height:${component.lineHeight ?? 1.25}`,
+      component.letterSpacing != null ? `letter-spacing:${component.letterSpacing}px` : "",
       `white-space:pre-wrap`,
-    ].join(";");
+    ]
+      .filter(Boolean)
+      .join(";");
     return `<div ${common}><div style="${style}">${escapeHtml(component.text ?? "")}</div></div>`;
   }
 
@@ -85,7 +88,7 @@ export function deckToHtml(deck: Deck): string {
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <style>
+${deck.fontCss ? `  <style>\n${deck.fontCss}\n  </style>\n` : ""}  <style>
     html, body { margin: 0; background: #0b1220; }
     .deck { display: flex; flex-direction: column; align-items: center; gap: 32px; padding: 32px 0 80px; }
     .slide { box-shadow: 0 24px 80px rgba(0,0,0,.35); }

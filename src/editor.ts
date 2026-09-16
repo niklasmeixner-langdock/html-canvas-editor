@@ -1,5 +1,5 @@
 import { cssColorToHex } from "./color.ts";
-import { flattenHtmlDocument, needsFlatten } from "./flatten.ts";
+import { ensureFontStyles, flattenHtmlDocument, needsFlatten } from "./flatten.ts";
 import { deckToHtml } from "./html.ts";
 import type { Deck, Slide, SlideComponent } from "./types.ts";
 import {
@@ -64,6 +64,7 @@ export class SlideEditor {
 
   constructor(private readonly root: HTMLElement, deck: Deck) {
     this.deck = structuredClone(deck);
+    ensureFontStyles(this.deck.fontCss);
     this.committed = structuredClone(deck);
     this.bind();
     this.fit();
@@ -74,6 +75,7 @@ export class SlideEditor {
   setDeck(deck: Deck, status = "Loaded") {
     this.finishTextEdit();
     this.deck = structuredClone(deck);
+    ensureFontStyles(this.deck.fontCss);
     this.committed = structuredClone(deck);
     this.slideIndex = 0;
     this.selectedId = null;
@@ -719,6 +721,7 @@ export class SlideEditor {
       text.style.color = component.color ?? "#111827";
       text.style.textAlign = component.textAlign ?? "left";
       text.style.lineHeight = String(component.lineHeight ?? 1.25);
+      text.style.letterSpacing = component.letterSpacing != null ? `${component.letterSpacing}px` : "";
       el.append(text);
     } else if (component.type === "image") {
       if (component.src) {

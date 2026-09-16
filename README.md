@@ -62,6 +62,13 @@ flatten runs in a Shadow DOM container instead. Translucent colours, gradients
 and opacity are preserved; hidden "presentation mode" slides are recovered;
 nav/controls are dropped; iframe shell pages are unwrapped.
 
+Layout is measured only after stylesheets, webfonts and images have loaded,
+with every entrance animation jumped to its final keyframe (otherwise staggered
+fade-ups produce faint, displaced layers). The deck's webfont CSS
+(`@import`/`@font-face`) travels with it as `fontCss`, so the editor and the
+export wrap text exactly like the source did; `letter-spacing` and
+`text-transform` are captured for the same reason.
+
 ## Editor
 
 - 1920×1080 slides, 8px snap (hold Alt to disable)

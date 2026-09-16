@@ -131,8 +131,13 @@ function flattenSlideEl(root: Element, index: number): Slide {
     }
 
     const children = [...el.children];
-    const text = children.length === 0 ? visibleText(el) : ownText(el);
+    let text = children.length === 0 ? visibleText(el) : ownText(el);
     if (text) {
+      // Bake text-transform in: the editor renders the string as-is, and case
+      // changes the width, so it must be measured and rendered the same way.
+      if (style.textTransform === "uppercase") text = text.toUpperCase();
+      else if (style.textTransform === "lowercase") text = text.toLowerCase();
+      const letterSpacing = Number.parseFloat(style.letterSpacing);
       add({
         id: uid("text"),
         type: "text",
@@ -146,6 +151,7 @@ function flattenSlideEl(root: Element, index: number): Slide {
         color: cssColorValue(style.color),
         textAlign: (style.textAlign as SlideComponent["textAlign"]) || "left",
         lineHeight: Number.parseFloat(style.lineHeight) / Math.max(Number.parseFloat(style.fontSize) || 24, 1) || 1.2,
+        letterSpacing: Number.isFinite(letterSpacing) && letterSpacing !== 0 ? round(letterSpacing) : undefined,
       });
     }
 
@@ -227,6 +233,64 @@ function settle(): Promise<void> {
 }
 
 /**
+ * Decks built for presenting animate their content in (staggered fade-ups,
+ * slide-ins). Measuring mid-flight yields faint, displaced layers, so every
+ * animation jumps to its final keyframe and transitions are off.
+ */
+const FREEZE_CSS =
+  "*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;animation-fill-mode:forwards!important;transition:none!important;scroll-behavior:auto!important}";
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  return Promise.race([promise, new Promise<undefined>((resolve) => setTimeout(resolve, ms))]);
+}
+
+/** Stylesheets, webfonts and images all move text around; wait for them. */
+async function waitForAssets(scope: ParentNode, doc: Document): Promise<void> {
+  const loaded = (el: Element, done: boolean) =>
+    done
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => {
+          el.addEventListener("load", () => resolve(), { once: true });
+          el.addEventListener("error", () => resolve(), { once: true });
+        });
+  await withTimeout(
+    Promise.all([
+      ...[...scope.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"]')].map((link) => loaded(link, !!link.sheet)),
+      ...[...scope.querySelectorAll("img")].map((img) => loaded(img, img.complete)),
+    ]),
+    2500,
+  );
+  // Fonts only start loading once text that uses them is laid out.
+  await settle();
+  await withTimeout(doc.fonts.ready, 2500);
+  await settle();
+}
+
+const FONT_HOST =
+  /fonts\.googleapis\.com|fonts\.bunny\.net|use\.typekit\.net|api\.fontshare\.com|fonts\.cdnfonts\.com|@fontsource|rsms\.me\/inter/i;
+
+/**
+ * The CSS the imported deck's typography depends on: webfont stylesheets and
+ * `@font-face` rules. Everything else about the source layout is baked into
+ * the flattened layers; this is the one part that has to travel with them.
+ */
+export function collectFontCss(doc: Document): string {
+  const parts: string[] = [];
+  doc.querySelectorAll('link[rel~="stylesheet"]').forEach((link) => {
+    const href = link.getAttribute("href") ?? "";
+    if (FONT_HOST.test(href)) parts.push(`@import url("${href}");`);
+  });
+  doc.querySelectorAll("style").forEach((style) => {
+    const css = style.textContent ?? "";
+    for (const match of css.matchAll(/@import\s+(?:url\()?\s*["']?([^"')\s;]+)["']?\s*\)?[^;]*;/g)) {
+      if (FONT_HOST.test(match[1] ?? "")) parts.push(match[0]);
+    }
+    for (const match of css.matchAll(/@font-face\s*\{[^}]*\}/g)) parts.push(match[0]);
+  });
+  return [...new Set(parts)].join("\n");
+}
+
+/**
  * Preferred path: a same-origin iframe gives true document semantics
  * (body styles, vw/vh against 1920×1080). Returns null when the host sandbox
  * makes the frame's document inaccessible.
@@ -242,7 +306,6 @@ async function flattenViaIframe(html: string): Promise<Deck | null> {
       iframe.addEventListener("load", () => resolve(), { once: true });
       iframe.srcdoc = html;
     });
-    await settle();
     let imported: Document | null = null;
     try {
       imported = iframe.contentDocument;
@@ -250,8 +313,13 @@ async function flattenViaIframe(html: string): Promise<Deck | null> {
       imported = null;
     }
     if (!imported?.body) return null;
+    const freeze = imported.createElement("style");
+    freeze.textContent = FREEZE_CSS;
+    imported.head.append(freeze);
+    await waitForAssets(imported, imported);
     const deck = emptyDeck(imported.title || "Imported deck");
     deck.source = "user";
+    deck.fontCss = collectFontCss(imported) || undefined;
     deck.slides = collectSlideRoots(imported.body).map((root, index) => flattenSlideEl(root, index));
     return deck;
   } finally {
@@ -294,11 +362,19 @@ async function flattenViaShadow(html: string): Promise<Deck> {
       clone.href = (link as HTMLLinkElement).href;
       shadow.append(clone);
     });
+    // Webfonts are document-wide, and @import inside a shadow <style> is
+    // ignored, so font CSS goes into the page head (and stays: the editor
+    // renders the flattened text with these same fonts).
+    const fontCss = collectFontCss(parsed);
+    ensureFontStyles(fontCss);
     parsed.querySelectorAll("style").forEach((style) => {
       const clone = document.createElement("style");
       clone.textContent = rewriteCss(style.textContent ?? "");
       shadow.append(clone);
     });
+    const freeze = document.createElement("style");
+    freeze.textContent = FREEZE_CSS;
+    shadow.append(freeze);
 
     const wrapper = document.createElement("div");
     wrapper.className = `__body ${parsed.body.className}`.trim();
@@ -312,9 +388,10 @@ async function flattenViaShadow(html: string): Promise<Deck> {
     });
     shadow.append(wrapper);
 
-    await settle();
+    await waitForAssets(shadow, document);
     const deck = emptyDeck(parsed.title || "Imported deck");
     deck.source = "user";
+    deck.fontCss = fontCss || undefined;
     deck.slides = collectSlideRoots(wrapper).map((root, index) => flattenSlideEl(root, index));
     return deck;
   } finally {
@@ -322,9 +399,27 @@ async function flattenViaShadow(html: string): Promise<Deck> {
   }
 }
 
+/**
+ * Make a deck's font CSS available in this document (idempotent). The editor
+ * calls this for whatever deck it shows; the import calls it so measuring
+ * and rendering use the same fonts.
+ */
+export function ensureFontStyles(fontCss: string | undefined) {
+  const css = fontCss ?? "";
+  let style = document.getElementById("deck-fonts") as HTMLStyleElement | null;
+  if (!style) {
+    if (!css) return;
+    style = document.createElement("style");
+    style.id = "deck-fonts";
+    document.head.append(style);
+  }
+  if (style.textContent !== css) style.textContent = css;
+}
+
 export async function flattenHtmlDocument(html: string): Promise<Deck> {
   const viaIframe = await flattenViaIframe(html).catch(() => null);
   const deck = viaIframe ?? (await flattenViaShadow(html));
+  ensureFontStyles(deck.fontCss);
   if (!deck.slides.length) deck.slides = [emptySlide("Slide 1")];
   return deck;
 }

@@ -22,6 +22,8 @@ export type SlideComponent = {
   color?: string;
   textAlign?: TextAlign;
   lineHeight?: number;
+  /** px */
+  letterSpacing?: number;
   src?: string;
   objectFit?: ObjectFit;
   background?: string;
@@ -49,6 +51,9 @@ export type Deck = {
   source: DeckSource;
   updatedAt: string;
   rawHtml?: string;
+  /** `@import`/`@font-face` CSS the slides' text depends on. Carried along so
+   *  the editor and the export wrap text exactly like the original did. */
+  fontCss?: string;
 };
 
 export function uid(prefix = "id"): string {

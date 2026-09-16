@@ -29,6 +29,7 @@ const deckSchema = z.object({
   source: z.enum(["sample", "user", "agent"]).optional(),
   updatedAt: z.string().optional(),
   rawHtml: z.string().optional(),
+  fontCss: z.string().optional(),
   slides: z.array(z.record(z.string(), z.unknown())),
 });
 
