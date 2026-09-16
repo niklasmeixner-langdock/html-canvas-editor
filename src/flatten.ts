@@ -110,6 +110,7 @@ function mapRect(
 
 function flattenSlideEl(root: Element, index: number): Slide {
   const slide = emptySlide(`Slide ${index + 1}`);
+  revealBuildSteps(root);
   const rootRect = root.getBoundingClientRect();
   // Geometry is mapped onto 1920×1080; type and radii must scale with it or a
   // slide rendered at 1680px (rail beside it) gets boxes that outgrow their text.
@@ -211,6 +212,10 @@ function flattenSlideEl(root: Element, index: number): Slide {
       if (style.textTransform === "uppercase") text = text.toUpperCase();
       else if (style.textTransform === "lowercase") text = text.toLowerCase();
       const letterSpacing = Number.parseFloat(style.letterSpacing) * scale;
+      const padding = Math.min(
+        Number.parseFloat(style.paddingTop) || 0,
+        Number.parseFloat(style.paddingLeft) || 0,
+      );
       add({
         id: uid("text"),
         type: "text",
@@ -226,6 +231,8 @@ function flattenSlideEl(root: Element, index: number): Slide {
         textAlign: (style.textAlign as SlideComponent["textAlign"]) || "left",
         lineHeight: Number.parseFloat(style.lineHeight) / Math.max(Number.parseFloat(style.fontSize) || 24, 1) || 1.2,
         letterSpacing: Number.isFinite(letterSpacing) && letterSpacing !== 0 ? round(letterSpacing) : undefined,
+        // Text measured from a padded box (card, pill) keeps its inset.
+        padding: padding > 0 ? round(padding * scale) : undefined,
       });
     }
 
@@ -290,6 +297,77 @@ const STATE_CLASSES = [
   "ready",
 ];
 const PAGE_STATE_CLASSES = ["js", "loaded", "is-loaded", "ready", "is-ready", "fonts-loaded"];
+
+/** Build steps inside a slide (reveal.js fragments, AOS, hand-rolled data-step). */
+const FRAGMENT_SELECTOR = [
+  ".fragment",
+  ".step",
+  ".build",
+  ".reveal",
+  ".appear",
+  ".fade",
+  ".fade-in",
+  ".fade-up",
+  ".slide-in",
+  ".slide-up",
+  ".anim",
+  ".animate",
+  ".animated",
+  "[data-step]",
+  "[data-reveal]",
+  "[data-animate]",
+  "[data-animation]",
+  "[data-aos]",
+  "[data-fragment]",
+  "[data-build]",
+  "[data-delay]",
+].join(", ");
+const FRAGMENT_STATE_CLASSES = [...STATE_CLASSES, "aos-animate", "fragment-visible", "current-fragment", "past"];
+
+/**
+ * A transform an element parks at before it animates in (offset, shrink).
+ * Layout transforms — centring with translate(-50%, -50%), rotation, skew —
+ * are left alone so revealing does not move things that were placed on
+ * purpose.
+ */
+function isEntranceTransform(value: string): boolean {
+  if (!value || value === "none") return false;
+  const match = value.match(/^matrix\(([^)]+)\)$/);
+  if (!match) return /^matrix3d\(/.test(value);
+  const [a, b, c, d, tx, ty] = match[1]!.split(",").map(Number) as [number, number, number, number, number, number];
+  const noRotation = Math.abs(b) < 1e-6 && Math.abs(c) < 1e-6;
+  const gentleScale = a > 0.4 && a < 1.6 && d > 0.4 && d < 1.6;
+  return noRotation && gentleScale && Math.hypot(tx, ty) <= 400;
+}
+
+/**
+ * Show the slide's final state. The deck's script would reveal build steps
+ * one click at a time; without it they sit invisible at their start state.
+ * First give known fragment markup its "shown" classes, then treat anything
+ * still laid out but invisible as an unfired step and reveal it in place.
+ * `display: none` is left alone: that is real hiding, not a pending step.
+ */
+function revealBuildSteps(root: Element) {
+  root.querySelectorAll(FRAGMENT_SELECTOR).forEach((el) => {
+    el.classList.add(...FRAGMENT_STATE_CLASSES);
+    el.removeAttribute("hidden");
+    if (el.getAttribute("aria-hidden") === "true") el.setAttribute("aria-hidden", "false");
+  });
+  root.querySelectorAll<HTMLElement>("*").forEach((el) => {
+    const style = getComputedStyle(el);
+    if (style.display === "none") return;
+    const invisible = Number.parseFloat(style.opacity) < 0.05 || style.visibility === "hidden";
+    if (!invisible) return;
+    const inline = el.style;
+    inline.setProperty("opacity", "1", "important");
+    inline.setProperty("visibility", "visible", "important");
+    inline.setProperty("clip-path", "none", "important");
+    inline.setProperty("filter", "none", "important");
+    // Undo the offset only for elements that were hidden: a visible element
+    // with a small translate is placed there on purpose.
+    if (isEntranceTransform(style.transform)) inline.setProperty("transform", "none", "important");
+  });
+}
 
 /** Slides in "presentation mode" decks are hidden until active; show them all. */
 function forceVisible(el: Element) {

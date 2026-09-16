@@ -77,6 +77,13 @@ and by geometry — a slide is big and roughly 16:9), every slide gets the
 shows, per-word reveal `<span>`s collapse back into one heading, and type is
 scaled with the geometry when the stage is narrower than 1920px.
 
+Animations are not carried over — the canvas is static — so a slide is
+imported in its **final state**: CSS animations jump to their last keyframe,
+known build-step markup (`.fragment`, `[data-step]`, AOS, …) gets its "shown"
+classes, and anything still laid out but invisible is treated as an unfired
+step and revealed in place (entrance offsets undone, layout transforms such as
+`translate(-50%, -50%)` kept). `display: none` stays hidden.
+
 Layout is measured only after stylesheets, webfonts and images have loaded,
 with every entrance animation jumped to its final keyframe (otherwise staggered
 fade-ups produce faint, displaced layers). The deck's webfont CSS
