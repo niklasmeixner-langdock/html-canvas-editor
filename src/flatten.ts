@@ -22,6 +22,65 @@ function visibleText(el: Element): string {
   return (el.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * The element's text with its hard line breaks kept: `<br>` becomes a
+ * newline, and so do newlines in the source when `white-space` preserves
+ * them. The editor renders text `pre-wrap`, so a two-line heading stays two
+ * lines instead of reflowing.
+ */
+function textWithBreaks(el: Element, style: CSSStyleDeclaration): string {
+  const preserveNewlines = /^pre/.test(style.whiteSpace);
+  const parts: string[] = [];
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      parts.push(node.textContent ?? "");
+    } else if (node instanceof Element) {
+      if (node.tagName === "BR") parts.push("\n");
+      else node.childNodes.forEach(walk);
+    }
+  };
+  el.childNodes.forEach(walk);
+  return parts
+    .join("")
+    .split("\n")
+    .map((line) => (preserveNewlines ? line : line.replace(/\s+/g, " ")).trim())
+    .join("\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+}
+
+/**
+ * Union of the line boxes the element's text occupies. With `ownOnly`, just
+ * its direct text nodes (the lines around inline children are left out).
+ */
+function ownTextRect(el: Element, ownOnly: boolean): DOMRect | null {
+  const nodes = ownOnly
+    ? [...el.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())
+    : [el];
+  let union: DOMRect | null = null;
+  for (const node of nodes) {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    for (const rect of range.getClientRects()) {
+      if (rect.width < 0.5 || rect.height < 0.5) continue;
+      union = union
+        ? new DOMRect(
+            Math.min(union.x, rect.x),
+            Math.min(union.y, rect.y),
+            Math.max(union.right, rect.right) - Math.min(union.x, rect.x),
+            Math.max(union.bottom, rect.bottom) - Math.min(union.y, rect.y),
+          )
+        : DOMRect.fromRect(rect);
+    }
+  }
+  return union;
+}
+
+function layerName(text: string): string {
+  const flat = text.replace(/\s*\n\s*/g, " ");
+  return flat.length > 28 ? `${flat.slice(0, 27)}…` : flat;
+}
+
 /** A leaf inline child that only carries text and inherits its parent's type. */
 function isPlainInline(child: Element, parent: CSSStyleDeclaration): boolean {
   if (child.tagName === "BR" || child.tagName === "WBR") return true;
@@ -209,7 +268,7 @@ function flattenSlideEl(root: Element, index: number): Slide {
     // is one heading: keep it as one layer so wrapping and order survive.
     // Spans styled differently (an accent word) stay their own layer.
     if (children.length && children.every((child) => isPlainInline(child, style))) children = [];
-    let text = children.length === 0 ? visibleText(el) : ownText(el);
+    let text = children.length === 0 ? textWithBreaks(el, style) : ownText(el);
     if (text) {
       // Bake text-transform in: the editor renders the string as-is, and case
       // changes the width, so it must be measured and rendered the same way.
@@ -220,15 +279,31 @@ function flattenSlideEl(root: Element, index: number): Slide {
         Number.parseFloat(style.paddingTop) || 0,
         Number.parseFloat(style.paddingLeft) || 0,
       );
+      // Where the text actually sits. Mixed content (`<b>Lead</b><br>body…`)
+      // puts the element's own text below its inline children, so the layer
+      // takes the lines it occupies rather than the whole element; a
+      // shrink-to-fit heading gets a hair of slack so the same font at the
+      // same size never wraps one word onto a line that gets clipped.
+      const textRect = ownTextRect(el, children.length > 0);
+      const textBox = { ...box };
+      if (textRect && children.length > 0) {
+        const lines = mapRect(textRect, rootRect);
+        // The layer's padding is applied on render too; keep the text where it was.
+        textBox.y = lines.y - padding * scale;
+        textBox.height = lines.height + 2 * padding * scale;
+      }
+      if (textRect && textRect.width >= rect.width - 1) textBox.width = Math.ceil(textBox.width) + 2;
       add({
         id: uid("text"),
         type: "text",
         // Layer list shows this; the text itself beats "div"/"span".
-        name: el.getAttribute("data-slot") || (text.length > 28 ? `${text.slice(0, 27)}…` : text),
-        ...box,
+        name: el.getAttribute("data-slot") || layerName(text),
+        ...textBox,
         opacity: round(opacity),
         text,
-        fontSize: Math.max(12, Math.round((Number.parseFloat(style.fontSize) || 24) * scale)),
+        // Not rounded to whole pixels: 63.99 → 64 is enough to push a full
+        // line over its measured width.
+        fontSize: Math.max(8, round((Number.parseFloat(style.fontSize) || 24) * scale)),
         fontWeight: Number.parseInt(style.fontWeight, 10) || 400,
         fontFamily: style.fontFamily,
         color: cssColorValue(style.color),
@@ -613,10 +688,49 @@ async function waitForAssets(scope: ParentNode, doc: Document): Promise<void> {
     ]),
     2500,
   );
-  // Fonts only start loading once text that uses them is laid out.
+  // Fonts only start loading once text that uses them is laid out, and at this
+  // point most slides are still `display:none` (only the active one shows), so
+  // `fonts.ready` would resolve before the deck's webfont was even requested
+  // and every hidden slide would be measured in the fallback font. Load each
+  // declared face outright.
   await settle();
+  await withTimeout(
+    Promise.all([...doc.fonts].map((face) => face.load().catch(() => undefined))),
+    4000,
+  );
   await withTimeout(doc.fonts.ready, 2500);
   await settle();
+}
+
+/**
+ * Slide masters add per-slide chrome at runtime: a `<template>` (footer with
+ * deck title and page number) that a boot script clones into every slide.
+ * Scripts do not run on import, so replay that here: clone each template's
+ * root into slides that lack it and fill the title/page slots.
+ */
+function applySlideMasterTemplates(scope: ParentNode, docTitle: string) {
+  const templates = [...scope.querySelectorAll("template")].filter((template) => {
+    const id = `${template.id} ${template.className}`.toLowerCase();
+    return /footer|master|chrome|header/.test(id) && template.content.firstElementChild;
+  });
+  if (!templates.length) return;
+  const slides = [...scope.querySelectorAll<HTMLElement>(".slide, section[class*='slide']")].filter(
+    (slide) => !slide.closest("template") && !slide.parentElement?.closest(".slide"),
+  );
+  slides.forEach((slide, index) => {
+    const title = slide.dataset.presentationTitle ?? slide.dataset.deckTitle ?? slide.dataset.title ?? docTitle;
+    for (const template of templates) {
+      const master = template.content.firstElementChild!;
+      const marker = master.classList[0];
+      if (marker && slide.querySelector(`.${marker}`)) continue;
+      const clone = master.cloneNode(true) as HTMLElement;
+      (slide.querySelector(":scope > .frame") ?? slide).append(clone);
+      clone.querySelectorAll<HTMLElement>("[class*='title']").forEach((el) => (el.textContent = title));
+      clone
+        .querySelectorAll<HTMLElement>("[class*='page'], [class*='number'], [class*='num']")
+        .forEach((el) => (el.textContent = `P. ${String(index + 1).padStart(2, "0")}`));
+    }
+  });
 }
 
 const FONT_HOST =
@@ -666,6 +780,7 @@ async function flattenViaIframe(html: string): Promise<Deck | null> {
       imported = null;
     }
     if (!imported?.body) return null;
+    applySlideMasterTemplates(imported.body, imported.title);
     captureStartStates(imported.body);
     const freeze = imported.createElement("style");
     freeze.textContent = FREEZE_CSS;
@@ -773,6 +888,7 @@ async function flattenViaShadow(html: string): Promise<Deck> {
       });
     }
 
+    applySlideMasterTemplates(wrapper, parsed.title);
     // Start state first (what the deck looks like at t=0, nothing revealed),
     // then freeze time and flag the page as booted.
     captureStartStates(wrapper);

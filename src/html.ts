@@ -32,14 +32,19 @@ function cssSize(component: SlideComponent): string {
     component.border ? `border:${component.border}` : "",
     component.padding != null ? `padding:${component.padding}px` : "",
     `box-sizing:border-box`,
-    `overflow:hidden`,
+    // Text spills rather than disappears when a viewer's font metrics differ
+    // by a hair from where the layer was measured; the editor does the same.
+    component.type === "text" ? `overflow:visible` : `overflow:hidden`,
   ]
     .filter(Boolean)
     .join(";");
 }
 
 function renderComponent(component: SlideComponent): string {
-  const common = `data-component="${component.type}" data-id="${component.id}" data-name="${escapeHtml(component.name)}" style="${cssSize(component)}"`;
+  // Every style value is attribute-escaped: computed font stacks carry double
+  // quotes ("STK Bureau Sans"), which would otherwise end the attribute early
+  // and drop the font and everything declared after it.
+  const common = `data-component="${component.type}" data-id="${component.id}" data-name="${escapeHtml(component.name)}" style="${escapeHtml(cssSize(component))}"`;
 
   if (component.type === "text") {
     const style = [
@@ -54,7 +59,7 @@ function renderComponent(component: SlideComponent): string {
     ]
       .filter(Boolean)
       .join(";");
-    return `<div ${common}><div style="${style}">${escapeHtml(component.text ?? "")}</div></div>`;
+    return `<div ${common}><div style="${escapeHtml(style)}">${escapeHtml(component.text ?? "")}</div></div>`;
   }
 
   if (component.type === "image") {
@@ -71,7 +76,7 @@ function renderComponent(component: SlideComponent): string {
 }
 
 function renderSlide(slide: Slide, index: number): string {
-  return `<section class="slide" data-slide="${slide.id}" data-name="${escapeHtml(slide.name)}" style="width:${SLIDE_WIDTH}px;height:${SLIDE_HEIGHT}px;position:relative;overflow:hidden;background:${slide.background}">
+  return `<section class="slide" data-slide="${slide.id}" data-name="${escapeHtml(slide.name)}" style="width:${SLIDE_WIDTH}px;height:${SLIDE_HEIGHT}px;position:relative;overflow:hidden;background:${escapeHtml(slide.background)}">
 ${slide.components.map(renderComponent).join("\n")}
 </section><!-- slide ${index + 1} -->`;
 }
