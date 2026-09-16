@@ -1,6 +1,7 @@
 import { cssColorToHex } from "./color.ts";
 import { ensureFontStyles, flattenHtmlDocument, needsFlatten } from "./flatten.ts";
-import { deckToHtml } from "./html.ts";
+import { ANIMATION_KEYFRAMES, animationValue, deckToHtml } from "./html.ts";
+import type { LayerAnimation } from "./types.ts";
 import type { Deck, Slide, SlideComponent } from "./types.ts";
 import {
   SLIDE_HEIGHT,
@@ -766,7 +767,11 @@ export class SlideEditor {
       button.type = "button";
       button.className = "layer";
       button.dataset.active = String(component.id === this.selectedId);
-      button.innerHTML = `<small>${component.type}</small><span>${escape(component.name)}</span>`;
+      const anim = component.animation;
+      const badge = anim
+        ? `<i class="anim-badge" title="${escape(describeAnimation(anim))}">${anim.step ? `▶${anim.step}` : "▶"}</i>`
+        : "";
+      button.innerHTML = `<small>${component.type}</small><span>${escape(component.name)}</span>${badge}`;
       button.addEventListener("click", () => {
         this.selectedId = component.id;
         this.renderSlide();
@@ -876,6 +881,15 @@ export class SlideEditor {
         ${numField("Radius", "prop-radius", selected.borderRadius ?? 0)}`
           : ""
       }
+      ${
+        selected.animation
+          ? `
+        <h2 class="props-sub">Animation</h2>
+        <p class="anim-summary">${escape(describeAnimation(selected.animation))}</p>
+        <p class="hint">Preserved from the imported deck and kept in the export. Press Play to preview.</p>
+        <button class="btn" id="prop-anim-remove" type="button">Remove animation</button>`
+          : ""
+      }
     `;
 
     const bindNum = (id: string, key: keyof SlideComponent) => {
@@ -908,6 +922,38 @@ export class SlideEditor {
       this.pendingImageId = selected.id;
       this.el<HTMLInputElement>("file").click();
     });
+    props.querySelector("#prop-anim-remove")?.addEventListener("click", () => {
+      this.mutateSelected({ animation: undefined }, "Animation removed");
+    });
+  }
+
+  /**
+   * Replay the current slide's entrance once, the way the export plays it:
+   * same keyframes, same timing. Purely visual; nothing is committed.
+   */
+  playAnimations() {
+    this.finishTextEdit();
+    if (!document.getElementById("ld-anim-keyframes")) {
+      const style = document.createElement("style");
+      style.id = "ld-anim-keyframes";
+      style.textContent = ANIMATION_KEYFRAMES;
+      document.head.append(style);
+    }
+    const nodes = this.root.querySelectorAll<HTMLElement>("#slide .el");
+    let any = false;
+    for (const node of nodes) {
+      const component = this.current().components.find((c) => c.id === node.dataset.id);
+      const value = component ? animationValue(component) : "";
+      node.style.animation = "";
+      if (!value) continue;
+      any = true;
+      // Restart: a reflow between clearing and setting re-triggers it.
+      void node.offsetWidth;
+      node.style.animation = value;
+      node.addEventListener("animationend", () => (node.style.animation = ""), { once: true });
+    }
+    this.status = any ? "Playing entrance" : "No animations on this slide";
+    this.renderStatus();
   }
 
   private syncPropValues(selected: SlideComponent) {
@@ -932,6 +978,11 @@ export class SlideEditor {
     const field = this.root.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`#${id}`);
     field?.addEventListener(eventName, () => apply(field.value));
   }
+}
+
+function describeAnimation(anim: LayerAnimation): string {
+  const when = anim.step ? `build step ${anim.step}` : anim.delay ? `after ${anim.delay} ms` : "with the slide";
+  return `${anim.effect.replace("-", " ")} · ${anim.duration} ms · ${when}`;
 }
 
 function numField(label: string, id: string, value: number): string {

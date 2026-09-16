@@ -361,6 +361,46 @@ button.btn.ghost:hover {
   letter-spacing: 0.04em;
 }
 
+.layer span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Preserved entrance animation marker */
+.anim-badge {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.props-sub {
+  margin-top: 16px !important;
+}
+
+.anim-summary {
+  margin: 0 0 4px;
+  padding: 0 6px;
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+.props .hint {
+  margin: 0 0 8px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 /*
  * Layout is driven by data attributes on #app, set in mcp-app.ts from the
  * host display mode (inline card / side panel / full screen) and the width:

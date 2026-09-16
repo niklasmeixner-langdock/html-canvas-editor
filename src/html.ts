@@ -76,9 +76,56 @@ ${slide.components.map(renderComponent).join("\n")}
 </section><!-- slide ${index + 1} -->`;
 }
 
+/** Keyframes for the effects in `AnimationEffect`; shared by export and editor preview. */
+export const ANIMATION_KEYFRAMES = `@keyframes ld-fade{from{opacity:0}}
+@keyframes ld-fade-up{from{opacity:0;transform:translateY(32px)}}
+@keyframes ld-fade-down{from{opacity:0;transform:translateY(-32px)}}
+@keyframes ld-fade-left{from{opacity:0;transform:translateX(32px)}}
+@keyframes ld-fade-right{from{opacity:0;transform:translateX(-32px)}}
+@keyframes ld-scale{from{opacity:0;transform:scale(.94)}}`;
+
+/** Gap between click-revealed build steps when the deck plays on its own. */
+export const STEP_GAP_MS = 450;
+
+/** `animation` shorthand for a layer, or "" when it has none. */
+export function animationValue(component: SlideComponent): string {
+  const anim = component.animation;
+  if (!anim) return "";
+  const delay = anim.delay + (anim.step ? anim.step * STEP_GAP_MS : 0);
+  return `ld-${anim.effect} ${anim.duration}ms cubic-bezier(.2,.7,.2,1) ${delay}ms both`;
+}
+
+/**
+ * Preserved entrances. Each animated layer gets its own rule; a slide's
+ * animations only run once it scrolls into view (the script below adds
+ * `.in-view`), and never for print or reduced-motion.
+ */
+function animationCss(deck: Deck): string {
+  const rules = deck.slides.flatMap((slide) =>
+    slide.components
+      .filter((component) => component.animation)
+      .map(
+        (component) =>
+          `.slide[data-slide="${slide.id}"] [data-id="${component.id}"]{animation:${animationValue(component)};animation-play-state:paused}`,
+      ),
+  );
+  if (!rules.length) return "";
+  return `
+    ${ANIMATION_KEYFRAMES}
+    ${rules.join("\n    ")}
+    .slide.in-view [data-id]{animation-play-state:running}
+    @media print, (prefers-reduced-motion: reduce){ .slide [data-id]{animation:none!important} }
+  `;
+}
+
+const IN_VIEW_SCRIPT = `<script>
+(function(){var o=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add("in-view");o.unobserve(e.target)}})},{threshold:.3});document.querySelectorAll(".slide").forEach(function(s){o.observe(s)})})();
+</script>`;
+
 export function deckToHtml(deck: Deck): string {
   // No id: an exported file re-imported elsewhere must get its own deck.
   const payload = JSON.stringify({ ...deck, id: undefined, rawHtml: undefined });
+  const animations = animationCss(deck);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -96,7 +143,7 @@ ${deck.fontCss ? `  <style>\n${deck.fontCss}\n  </style>\n` : ""}  <style>
       html, body { background: #fff; }
       .deck { gap: 0; padding: 0; }
       .slide { box-shadow: none; page-break-after: always; }
-    }
+    }${animations}
   </style>
 </head>
 <body>
@@ -104,6 +151,7 @@ ${deck.fontCss ? `  <style>\n${deck.fontCss}\n  </style>\n` : ""}  <style>
 ${deck.slides.map(renderSlide).join("\n")}
   </main>
   <script type="application/json" id="${DECK_MARKER}">${payload.replaceAll("<", "\\u003c")}</script>
+${animations ? IN_VIEW_SCRIPT : ""}
 </body>
 </html>
 `;

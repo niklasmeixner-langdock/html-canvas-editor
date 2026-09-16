@@ -1,5 +1,5 @@
 import { colorAlpha, cssColorValue, isTransparent } from "./color.ts";
-import type { Deck, Slide, SlideComponent } from "./types.ts";
+import type { AnimationEffect, Deck, LayerAnimation, Slide, SlideComponent } from "./types.ts";
 import {
   SLIDE_HEIGHT,
   SLIDE_WIDTH,
@@ -124,8 +124,11 @@ function flattenSlideEl(root: Element, index: number): Slide {
     if (behind) slide.background = `linear-gradient(${rootBackground}, ${rootBackground}) ${behind}`;
   }
 
+  const steps = collectSteps(root);
+  // Every layer made from the element being visited carries its entrance.
+  let animation: LayerAnimation | undefined;
   const add = (component: SlideComponent) => {
-    const boxed = clampComponent(component);
+    const boxed = clampComponent(animation ? { ...component, animation } : component);
     if (boxed.width < 8 || boxed.height < 4) return;
     slide.components.push(boxed);
   };
@@ -141,6 +144,7 @@ function flattenSlideEl(root: Element, index: number): Slide {
     if (rect.width < 4 || rect.height < 2) return;
     const box = mapRect(rect, rootRect);
     const round = (value: number) => Math.round(value * 100) / 100;
+    animation = detectAnimation(el, root, steps);
 
     if (el instanceof HTMLImageElement && el.src) {
       add({
@@ -439,6 +443,156 @@ function settle(): Promise<void> {
 const FREEZE_CSS =
   "*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;animation-fill-mode:forwards!important;transition:none!important;scroll-behavior:auto!important}";
 
+/* ---------------------------------------------------------------------------
+ * Animation preservation
+ *
+ * Before anything is frozen or revealed, every element's *start* state is
+ * recorded: opacity, transform, and the declared animation/transition timing.
+ * Once layers are measured in their final state, the difference tells us the
+ * entrance effect (parked 30px below and invisible → fade-up, 200ms delay),
+ * which is stored on the layer and re-emitted on export.
+ * ------------------------------------------------------------------------- */
+
+type StartState = {
+  opacity: number;
+  hidden: boolean;
+  tx: number;
+  ty: number;
+  scale: number;
+  animationName: string;
+  animationDuration: number;
+  animationDelay: number;
+  transitionDuration: number;
+  transitionDelay: number;
+};
+
+const startStates = new WeakMap<Element, StartState>();
+
+/** Click-revealed build steps (as opposed to on-load entrances). */
+const STEP_SELECTOR = ".fragment, .step, [data-step], [data-fragment], [data-fragment-index], [data-build]";
+
+/** First time in a comma list, in ms ("0.6s, 0.2s" → 600). */
+function msOf(value: string): number {
+  const first = value.split(",")[0]?.trim() ?? "";
+  const number = Number.parseFloat(first);
+  if (!Number.isFinite(number)) return 0;
+  return first.endsWith("ms") ? number : number * 1000;
+}
+
+function parseTransform(value: string): { tx: number; ty: number; scale: number } {
+  const match = value.match(/^matrix\(([^)]+)\)$/);
+  if (!match) {
+    const m3 = value.match(/^matrix3d\(([^)]+)\)$/);
+    if (!m3) return { tx: 0, ty: 0, scale: 1 };
+    const v = m3[1]!.split(",").map(Number);
+    return { tx: v[12] ?? 0, ty: v[13] ?? 0, scale: v[0] ?? 1 };
+  }
+  const [a, , , d, tx, ty] = match[1]!.split(",").map(Number) as [number, number, number, number, number, number];
+  return { tx, ty, scale: (a + d) / 2 };
+}
+
+/** Record the pre-animation state of everything under `scope`. */
+function captureStartStates(scope: ParentNode) {
+  scope.querySelectorAll("*").forEach((el) => {
+    const style = getComputedStyle(el);
+    const opacity = Number.parseFloat(style.opacity);
+    startStates.set(el, {
+      opacity: Number.isFinite(opacity) ? opacity : 1,
+      hidden: style.visibility === "hidden",
+      ...parseTransform(style.transform),
+      animationName: style.animationName,
+      animationDuration: msOf(style.animationDuration),
+      animationDelay: msOf(style.animationDelay),
+      transitionDuration: msOf(style.transitionDuration),
+      transitionDelay: msOf(style.transitionDelay),
+    });
+  });
+}
+
+function effectFromName(name: string): AnimationEffect | undefined {
+  const lower = name.toLowerCase();
+  if (lower === "none" || !lower) return undefined;
+  if (/up|rise|bottom/.test(lower)) return "fade-up";
+  if (/down|top/.test(lower)) return "fade-down";
+  if (/left/.test(lower)) return "fade-left";
+  if (/right/.test(lower)) return "fade-right";
+  if (/zoom|scale|pop|grow/.test(lower)) return "scale";
+  if (/fade|in|appear|reveal|show|enter/.test(lower)) return "fade";
+  return undefined;
+}
+
+function ownAnimation(el: Element): Omit<LayerAnimation, "step"> | undefined {
+  const start = startStates.get(el);
+  if (!start) return undefined;
+  const cssAnimation = start.animationName !== "none" && start.animationDuration > 0;
+  const invisible = start.opacity < 0.05 || start.hidden;
+  // Only something that starts hidden or declares an animation counts; a
+  // visible element with a small translate is placed there on purpose.
+  if (!cssAnimation && !invisible) return undefined;
+  const offset = Math.hypot(start.tx, start.ty) > 2;
+  const shrunk = Math.abs(start.scale - 1) > 0.02;
+  let effect: AnimationEffect | undefined;
+  if (offset) {
+    effect =
+      Math.abs(start.ty) >= Math.abs(start.tx)
+        ? start.ty > 0
+          ? "fade-up"
+          : "fade-down"
+        : start.tx > 0
+          ? "fade-left"
+          : "fade-right";
+  } else if (shrunk) {
+    effect = "scale";
+  } else if (invisible) {
+    effect = "fade";
+  } else {
+    effect = effectFromName(start.animationName);
+  }
+  if (!effect) return undefined;
+  const duration = cssAnimation ? start.animationDuration : start.transitionDuration || 600;
+  const delay = cssAnimation ? start.animationDelay : start.transitionDelay;
+  return {
+    effect,
+    delay: Math.max(0, Math.round(delay)),
+    duration: Math.round(Math.min(Math.max(duration, 100), 3000)),
+  };
+}
+
+/**
+ * Animation for the layer made from `el`: its own, or the nearest animated
+ * ancestor's (a fading card fades its text with it). Build-step order comes
+ * from the same ancestor chain.
+ */
+function detectAnimation(el: Element, root: Element, steps: Map<Element, number>): LayerAnimation | undefined {
+  for (let node: Element | null = el; node && node !== root; node = node.parentElement) {
+    const own = ownAnimation(node);
+    if (!own) continue;
+    let step: number | undefined;
+    for (let s: Element | null = node; s && s !== root; s = s.parentElement) {
+      if (steps.has(s)) {
+        step = steps.get(s);
+        break;
+      }
+    }
+    return step ? { ...own, step } : own;
+  }
+  return undefined;
+}
+
+function collectSteps(root: Element): Map<Element, number> {
+  const steps = new Map<Element, number>();
+  let order = 0;
+  root.querySelectorAll(STEP_SELECTOR).forEach((el) => {
+    const explicit = Number.parseInt(
+      el.getAttribute("data-step") ?? el.getAttribute("data-fragment-index") ?? el.getAttribute("data-build") ?? "",
+      10,
+    );
+    order += 1;
+    steps.set(el, Number.isFinite(explicit) && explicit > 0 ? explicit : order);
+  });
+  return steps;
+}
+
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
   return Promise.race([promise, new Promise<undefined>((resolve) => setTimeout(resolve, ms))]);
 }
@@ -512,6 +666,7 @@ async function flattenViaIframe(html: string): Promise<Deck | null> {
       imported = null;
     }
     if (!imported?.body) return null;
+    captureStartStates(imported.body);
     const freeze = imported.createElement("style");
     freeze.textContent = FREEZE_CSS;
     imported.head.append(freeze);
@@ -586,10 +741,6 @@ async function flattenViaShadow(html: string): Promise<Deck> {
       clone.textContent = rewriteCss(style.textContent ?? "");
       shadow.append(clone);
     });
-    const freeze = document.createElement("style");
-    freeze.textContent = FREEZE_CSS;
-    shadow.append(freeze);
-
     // The wrapper stands in for both <html> and <body>: theme switches live on
     // either (`<html data-theme="dark">`, `<body class="dark">`).
     const wrapper = document.createElement("div");
@@ -607,8 +758,6 @@ async function flattenViaShadow(html: string): Promise<Deck> {
       const inline = el.getAttribute("style") ?? "";
       if (/\d(vw|vh)\b/.test(inline)) el.setAttribute("style", rewriteCss(inline));
     });
-    // Scripts usually flag the page once booted (`body.loaded`, `.ready`).
-    wrapper.classList.add(...PAGE_STATE_CLASSES);
     shadow.append(wrapper);
 
     // Decks that scale type with `html { font-size: … }` + rem: the wrapper now
@@ -623,6 +772,14 @@ async function flattenViaShadow(html: string): Promise<Deck> {
         if (/\drem\b/.test(inline)) el.setAttribute("style", rewriteRem(inline, rootPx));
       });
     }
+
+    // Start state first (what the deck looks like at t=0, nothing revealed),
+    // then freeze time and flag the page as booted.
+    captureStartStates(wrapper);
+    const freeze = document.createElement("style");
+    freeze.textContent = FREEZE_CSS;
+    shadow.append(freeze);
+    wrapper.classList.add(...PAGE_STATE_CLASSES);
 
     await waitForAssets(shadow, document);
     const deck = emptyDeck(parsed.title || "Imported deck");

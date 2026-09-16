@@ -24,6 +24,8 @@ export type SlideComponent = {
   lineHeight?: number;
   /** px */
   letterSpacing?: number;
+  /** Entrance animation, preserved from the imported deck and re-emitted on export. */
+  animation?: LayerAnimation;
   src?: string;
   objectFit?: ObjectFit;
   background?: string;
@@ -32,6 +34,26 @@ export type SlideComponent = {
   padding?: number;
   html?: string;
 };
+
+/**
+ * The small declarative model we keep of an animation. Deliberately not CSS:
+ * a handful of entrance effects plus timing is what LLM-written decks use,
+ * and it survives the round trip through the canvas. Anything richer
+ * (custom keyframes, script-driven motion) is imported in its final state.
+ */
+export type AnimationEffect = "fade" | "fade-up" | "fade-down" | "fade-left" | "fade-right" | "scale";
+
+export type LayerAnimation = {
+  effect: AnimationEffect;
+  /** ms after the slide (or the previous build step) starts */
+  delay: number;
+  /** ms */
+  duration: number;
+  /** 1-based build step when the source revealed this on click; undefined = with the slide */
+  step?: number;
+};
+
+export const ANIMATION_EFFECTS: AnimationEffect[] = ["fade", "fade-up", "fade-down", "fade-left", "fade-right", "scale"];
 
 export type Slide = {
   id: string;

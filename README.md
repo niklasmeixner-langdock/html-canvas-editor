@@ -77,12 +77,32 @@ and by geometry — a slide is big and roughly 16:9), every slide gets the
 shows, per-word reveal `<span>`s collapse back into one heading, and type is
 scaled with the geometry when the stage is narrower than 1920px.
 
-Animations are not carried over — the canvas is static — so a slide is
-imported in its **final state**: CSS animations jump to their last keyframe,
-known build-step markup (`.fragment`, `[data-step]`, AOS, …) gets its "shown"
-classes, and anything still laid out but invisible is treated as an unfired
-step and revealed in place (entrance offsets undone, layout transforms such as
-`translate(-50%, -50%)` kept). `display: none` stays hidden.
+The canvas is static, so a slide is imported in its **final state**: CSS
+animations jump to their last keyframe, known build-step markup (`.fragment`,
+`[data-step]`, AOS, …) gets its "shown" classes, and anything still laid out
+but invisible is treated as an unfired step and revealed in place (entrance
+offsets undone, layout transforms such as `translate(-50%, -50%)` kept).
+`display: none` stays hidden.
+
+### Animations are preserved, not edited
+
+Before anything is frozen, every element's start state is recorded (opacity,
+transform, declared animation/transition timing). The difference to the final
+state gives each layer a small declarative `animation`:
+`{ effect, delay, duration, step? }` with `effect` one of `fade`, `fade-up`,
+`fade-down`, `fade-left`, `fade-right`, `scale`, and `step` for click-revealed
+build steps. A card that fades in fades its text with it (nearest animated
+ancestor wins).
+
+- **Editor**: animated layers carry a `▶` badge (`▶2` = build step 2); the
+  props panel shows the animation read-only with *Remove animation*; **Play**
+  replays the current slide's entrance.
+- **Export**: keyframes plus one rule per animated layer, paused until the
+  slide scrolls into view (small inline `IntersectionObserver`), build steps
+  sequenced 450 ms apart, all off for print and `prefers-reduced-motion`.
+- Deliberately out of scope: custom keyframes, easing, script-driven motion
+  (typewriters, counters, GSAP) — those import as their final state with no
+  animation recorded.
 
 Layout is measured only after stylesheets, webfonts and images have loaded,
 with every entrance animation jumped to its final keyframe (otherwise staggered

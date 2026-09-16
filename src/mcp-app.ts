@@ -305,6 +305,7 @@ document.getElementById("copy-btn")!.addEventListener("click", () => {
 document.getElementById("download-btn")!.addEventListener("click", () => {
   void downloadHtml().catch((error) => setStatus(error instanceof Error ? error.message : "Download failed"));
 });
+document.getElementById("play-btn")!.addEventListener("click", () => editor.playAnimations());
 document.getElementById("panels-btn")!.addEventListener("click", () => {
   panelsOpen = !panelsOpen;
   applyLayout();
