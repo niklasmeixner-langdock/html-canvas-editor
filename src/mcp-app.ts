@@ -77,6 +77,49 @@ function setMode(next: Mode) {
 window.addEventListener("resize", applyLayout);
 applyLayout();
 
+/**
+ * Light/dark. Precedence: what the user picked with the toggle (remembered
+ * per browser), then the host's theme (Langdock's own setting, also pushed
+ * on change), then the OS preference. Only the editor chrome changes; slides
+ * keep their own colours.
+ */
+type Theme = "light" | "dark";
+const THEME_KEY = "slide-canvas-theme";
+const osTheme = window.matchMedia("(prefers-color-scheme: light)");
+let hostTheme: Theme | undefined;
+
+function storedTheme(): Theme | undefined {
+  try {
+    const value = localStorage.getItem(THEME_KEY);
+    return value === "light" || value === "dark" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function applyTheme() {
+  const theme: Theme = storedTheme() ?? hostTheme ?? (osTheme.matches ? "light" : "dark");
+  document.documentElement.dataset.theme = theme;
+  const button = document.getElementById("theme-btn")!;
+  const label = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+  button.title = label;
+  button.setAttribute("aria-label", label);
+}
+
+function toggleTheme() {
+  const next: Theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    // private mode: the choice just lasts for this session
+    hostTheme = next;
+  }
+  applyTheme();
+}
+
+osTheme.addEventListener("change", applyTheme);
+applyTheme();
+
 function setStatus(text: string) {
   editor.status = text;
   editor.render();
@@ -317,8 +360,14 @@ document.getElementById("maximize-btn")!.addEventListener("click", () => {
     .catch(() => setStatus("Host did not allow full screen"));
 });
 
+document.getElementById("theme-btn")!.addEventListener("click", toggleTheme);
+
 app.onhostcontextchanged = (context) => {
   if (context.displayMode) setMode(context.displayMode);
+  if (context.theme) {
+    hostTheme = context.theme;
+    applyTheme();
+  }
 };
 
 app.ontoolresult = (result) => {
@@ -348,7 +397,12 @@ async function start() {
   }
   editor.status = "Waiting for host…";
   await app.connect();
-  setMode(app.getHostContext()?.displayMode ?? "inline");
+  const context = app.getHostContext();
+  setMode(context?.displayMode ?? "inline");
+  if (context?.theme) {
+    hostTheme = context.theme;
+    applyTheme();
+  }
   // The host shows a loader until the first size report. Inline it also sizes
   // the card from it; side panel and full screen own their size.
   void app.sendSizeChanged({

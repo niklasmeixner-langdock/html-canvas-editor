@@ -1,24 +1,61 @@
-:root {
+/*
+ * Theme: `data-theme="dark" | "light"` on <html>, set from the host context
+ * (Langdock's own theme), the user's toggle, or the OS preference. Dark is
+ * the default so the app never flashes light in a dark host.
+ */
+:root,
+:root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #13141b;
   --panel: #1f2026;
   --panel-2: #25262c;
+  --panel-3: #2b2c32;
   --line: #2b2c32;
   --line-strong: #37383d;
+  --line-hover: #45464c;
   --text: #f5f4f2;
   --muted: #898a8c;
   --faint: #727376;
   --accent: #4469fc;
   --accent-hover: #6987fd;
   --accent-soft: rgba(68, 105, 252, 0.16);
+  --on-accent: #fff;
   --danger: #ef4444;
   --canvas: #13141b;
+  --canvas-glow: #1a1b23;
   --handle: #4469fc;
+  --handle-fill: #fff;
+  --overlay: rgba(19, 20, 27, 0.8);
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
   --radius: 12px;
   --radius-sm: 8px;
   --font: Inter, "Inter Fallback", Arial, sans-serif;
   font-family: var(--font);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --panel: #f7f7f8;
+  --panel-2: #efeff1;
+  --panel-3: #e6e6e9;
+  --line: #e5e5e8;
+  --line-strong: #d6d6da;
+  --line-hover: #c4c4c9;
+  --text: #1a1c21;
+  --muted: #6b6c72;
+  --faint: #8a8b90;
+  --accent: #4469fc;
+  --accent-hover: #2f55ea;
+  --accent-soft: rgba(68, 105, 252, 0.12);
+  --on-accent: #fff;
+  --danger: #dc2626;
+  --canvas: #ececee;
+  --canvas-glow: #f4f4f5;
+  --handle: #4469fc;
+  --handle-fill: #fff;
+  --overlay: rgba(255, 255, 255, 0.85);
+  --shadow: 0 24px 80px rgba(20, 22, 30, 0.18);
 }
 
 * {
@@ -156,18 +193,18 @@ button.btn,
 button.btn:hover,
 .layer-actions button:hover {
   background: var(--panel-2);
-  border-color: #45464c;
+  border-color: var(--line-hover);
 }
 
 button.btn:active,
 .layer-actions button:active {
-  background: #2b2c32;
+  background: var(--panel-3);
 }
 
 button.btn.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 button.btn.primary:hover {
@@ -459,6 +496,12 @@ button.btn.ghost:hover {
   display: none;
 }
 
+/* Theme toggle: sun in dark mode, moon in light mode. */
+:root[data-theme="light"] #theme-btn .icon-sun,
+:root:not([data-theme="light"]) #theme-btn .icon-moon {
+  display: none;
+}
+
 /* Side panel: panel toggle + full screen live in the top bar. */
 #panels-btn,
 #maximize-btn {
@@ -483,7 +526,7 @@ button.btn.icon[aria-pressed="true"] {
 }
 button.btn.icon[aria-pressed="true"] {
   background: var(--panel-2);
-  border-color: #45464c;
+  border-color: var(--line-hover);
 }
 
 /* Inline chat card: slides only. */
@@ -515,7 +558,7 @@ button.btn.icon[aria-pressed="true"] {
   min-width: 0;
   min-height: 0;
   background:
-    radial-gradient(circle at 50% 45%, #1a1b23 0%, var(--canvas) 70%);
+    radial-gradient(circle at 50% 45%, var(--canvas-glow) 0%, var(--canvas) 70%);
   overflow: hidden;
 }
 
@@ -616,7 +659,7 @@ button.btn.icon[aria-pressed="true"] {
   position: absolute;
   width: 10px;
   height: 10px;
-  background: #fff;
+  background: var(--handle-fill);
   border: 1.5px solid var(--handle);
   pointer-events: auto;
   cursor: nwse-resize;
@@ -708,7 +751,7 @@ button.btn.icon[aria-pressed="true"] {
 .props input:hover,
 .props select:hover,
 .props textarea:hover {
-  border-color: #45464c;
+  border-color: var(--line-hover);
 }
 
 .xywh {
@@ -753,7 +796,7 @@ button.btn.icon[aria-pressed="true"] {
 }
 
 .thumb:hover {
-  border-color: #45464c;
+  border-color: var(--line-hover);
 }
 
 .thumb[data-active="true"] {
@@ -767,7 +810,7 @@ button.btn.icon[aria-pressed="true"] {
   bottom: 6px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: rgba(19, 20, 27, 0.8);
+  background: var(--overlay);
   color: var(--text);
   font-size: 10px;
 }

@@ -113,6 +113,9 @@ export wrap text exactly like the source did; `letter-spacing` and
 
 ## Editor
 
+- Light and dark chrome. Follows the host's theme (Langdock pushes it via the
+  host context), else the OS; the sun/moon button overrides it and the choice
+  is remembered per browser. Slides keep their own colours.
 - 1920×1080 slides, 8px snap (hold Alt to disable)
 - Navigation like Figma: drag empty canvas (or Space/middle-drag) to pan,
   scroll to pan, ⌘/Ctrl+scroll or pinch to zoom around the cursor, Fit to reset
