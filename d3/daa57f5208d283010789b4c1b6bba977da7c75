@@ -1,0 +1,19 @@
+src/pptx.ts
+  s_b0d5b3bbb45194::t_befc3854d96eab 1-698
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d3daa57f5208d283010789b4c1b6bba977da7c75",
+  "prompts": {},
+  "sessions": {
+    "s_b0d5b3bbb45194": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "ea5da182-9701-4bbd-af65-d0034d947aae",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Niklas Meixner <niklasmeixner@MacBook-Pro-von-Niklas.local>"
+    }
+  }
+}
