@@ -218,14 +218,38 @@ function shape(c: SlideComponent, spid: number): string {
   const fill = c.background ? fillXml(c.background, c.opacity) : null;
   const line = c.border ? lineXml(c.border, c.opacity) : null;
   const isText = c.type === "text";
+  const frame = isText ? textFrame(c) : { x: c.x, y: c.y, width: c.width, height: c.height, wrap: true };
   return `<p:sp>
 <p:nvSpPr><p:cNvPr id="${spid}" name="${esc(c.name || c.type)}"/><p:cNvSpPr txBox="${isText ? 1 : 0}"/><p:nvPr/></p:nvSpPr>
-<p:spPr>${xfrm(c)}${geometry(c)}${fill ?? "<a:noFill/>"}${line ?? "<a:ln><a:noFill/></a:ln>"}</p:spPr>
-${isText ? textBody(c) : `<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody>`}
+<p:spPr>${xfrm(frame)}${geometry(c)}${fill ?? "<a:noFill/>"}${line ?? "<a:ln><a:noFill/></a:ln>"}</p:spPr>
+${isText ? textBody(c, frame.wrap) : `<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody>`}
 </p:sp>`;
 }
 
-function textBody(c: SlideComponent): string {
+/**
+ * PowerPoint sets type a little wider than Chrome (different kerning, and a
+ * substituted font when the webfont is missing), so a box that fit exactly
+ * in the browser wraps its last word. Single lines therefore never wrap, and
+ * wrapping boxes get slack on the side their alignment grows into, so the
+ * visible text stays where it was.
+ */
+function textFrame(c: SlideComponent): { x: number; y: number; width: number; height: number; wrap: boolean } {
+  const text = c.text ?? "";
+  const lineHeight = (c.fontSize ?? 32) * (c.lineHeight ?? 1.25);
+  const innerHeight = c.height - 2 * (c.padding ?? 0);
+  const singleLine = !text.includes("\n") && innerHeight < lineHeight * 1.9;
+  if (singleLine) {
+    // No wrapping; keep the box so alignment (and any fill/border) stays put.
+    return { x: c.x, y: c.y, width: c.width, height: c.height, wrap: false };
+  }
+  const slack = Math.max(12, c.width * 0.06);
+  const align = c.textAlign as string | undefined;
+  if (align === "center") return { x: c.x - slack / 2, y: c.y, width: c.width + slack, height: c.height, wrap: true };
+  if (align === "right" || align === "end") return { x: c.x - slack, y: c.y, width: c.width + slack, height: c.height, wrap: true };
+  return { x: c.x, y: c.y, width: c.width + slack, height: c.height, wrap: true };
+}
+
+function textBody(c: SlideComponent, wrap: boolean): string {
   const pad = emu(c.padding ?? 0);
   const size = Math.max(1, Math.round((c.fontSize ?? 32) * PT_PER_PX * 100));
   const color = parseColor(c.color ?? "#111827");
@@ -242,7 +266,7 @@ function textBody(c: SlideComponent): string {
     .split("\n")
     .map((line) => `<a:p><a:pPr${align}>${lineSpacing}</a:pPr>${line ? `<a:r>${rPr}<a:t>${esc(line)}</a:t></a:r>` : ""}<a:endParaRPr lang="en-US" sz="${size}"/></a:p>`)
     .join("");
-  return `<p:txBody><a:bodyPr wrap="square" lIns="${pad}" tIns="${pad}" rIns="${pad}" bIns="${pad}" rtlCol="0" anchor="t"><a:noAutofit/></a:bodyPr><a:lstStyle/>${paragraphs}</p:txBody>`;
+  return `<p:txBody><a:bodyPr wrap="${wrap ? "square" : "none"}" lIns="${pad}" tIns="${pad}" rIns="${pad}" bIns="${pad}" rtlCol="0" anchor="t"><a:noAutofit/></a:bodyPr><a:lstStyle/>${paragraphs}</p:txBody>`;
 }
 
 function alignXml(align: string | undefined): string {
