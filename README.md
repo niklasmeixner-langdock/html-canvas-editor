@@ -97,9 +97,10 @@ ancestor wins).
 - **Editor**: animated layers carry a `▶` badge (`▶2` = build step 2); the
   props panel shows the animation read-only with *Remove animation*; **Play**
   replays the current slide's entrance.
-- **Export**: keyframes plus one rule per animated layer, paused until the
-  slide scrolls into view (small inline `IntersectionObserver`), build steps
-  sequenced 450 ms apart, all off for print and `prefers-reduced-motion`.
+- **Export**: keyframes plus one rule per animated layer, run when the slide
+  becomes active; build steps are revealed click by click (Play in the editor
+  sequences them 450 ms apart instead); all off for print and
+  `prefers-reduced-motion`.
 - Deliberately out of scope: custom keyframes, easing, script-driven motion
   (typewriters, counters, GSAP) — those import as their final state with no
   animation recorded.
@@ -110,6 +111,22 @@ fade-ups produce faint, displaced layers). The deck's webfont CSS
 (`@import`/`@font-face`) travels with it as `fontCss`, so the editor and the
 export wrap text exactly like the source did; `letter-spacing` and
 `text-transform` are captured for the same reason.
+
+## Exported file
+
+The download is a self-contained presentation, not a scroll of slides: one
+slide at a time, scaled to the window (letterboxed 16:9), no dependencies.
+
+- `→` `↓` `Space` `PageDown` `Enter` next (reveals the next build step first),
+  `←` `↑` `PageUp` `Backspace` back, `Home`/`End`, `F` full screen
+- Click the right 80 % of the window for next, the left 20 % for back; swipe
+  on touch
+- `Esc` or `O` toggles an overview grid; click a slide to jump to it
+- The slide number lives in the URL hash (`deck.html#4`), so links and
+  reloads land on the right slide
+- Counter, progress bar and key hint only show while the pointer moves
+- Print / save as PDF: every slide on its own 1920×1080 page
+- The deck JSON is embedded, so the file re-imports into the canvas losslessly
 
 ## Editor
 
