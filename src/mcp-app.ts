@@ -336,6 +336,44 @@ async function downloadHtml() {
   );
 }
 
+/**
+ * PowerPoint is built on the server (native shapes + animations) from the
+ * exact deck on screen, so both standalone and hosted go through a snapshot.
+ */
+async function downloadPptx() {
+  editor.status = "Building PowerPoint…";
+  editor.render();
+  if (!serverBase) {
+    setStatus("Cannot reach the editor server · ask the chat for the .pptx");
+    return;
+  }
+  void (standalone ? saveStandalone() : saveHosted()).catch(() => {
+    /* surfaced on explicit Save */
+  });
+  let url: string;
+  try {
+    url = `${await snapshotUrl()}.pptx`;
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Snapshot failed");
+    return;
+  }
+  if (standalone) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.rel = "noopener";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setStatus("Downloaded PowerPoint");
+    return;
+  }
+  const { isError } = await app.openLink({ url });
+  setStatus(isError ? "Host blocked the download link · ask the chat for the .pptx" : "PowerPoint opened in a new tab");
+}
+
+document.getElementById("pptx-btn")!.addEventListener("click", () => {
+  void downloadPptx().catch((error) => setStatus(error instanceof Error ? error.message : "PowerPoint export failed"));
+});
 document.getElementById("save-btn")!.addEventListener("click", () => {
   void save().catch((error) => setStatus(error instanceof Error ? error.message : "Save failed"));
 });

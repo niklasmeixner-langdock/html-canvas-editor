@@ -533,7 +533,7 @@ button.btn.icon[aria-pressed="true"] {
 #app[data-mode="inline"] {
   grid-template-rows: 40px minmax(0, 1fr) 68px;
 }
-#app[data-mode="inline"] .topbar-actions .btn:not(#download-btn) {
+#app[data-mode="inline"] .topbar-actions .btn:not(#download-btn):not(#pptx-btn) {
   display: none;
 }
 #app[data-mode="inline"] .brand span {

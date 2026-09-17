@@ -112,6 +112,17 @@ fade-ups produce faint, displaced layers). The deck's webfont CSS
 export wrap text exactly like the source did; `letter-spacing` and
 `text-transform` are captured for the same reason.
 
+## PowerPoint export
+
+`PPTX` in the top bar (or the `export_slides_pptx` tool) writes a `.pptx`
+with native shapes, generated directly as Office Open XML (`src/pptx.ts`, no
+pptxgenjs): text boxes keep font, size, weight, colour, alignment, line
+height and letter spacing; rectangles keep fill (solid or linear gradient),
+border and corner radius; images are embedded, inline SVG icons are
+rasterised. Entrance animations become PowerPoint animations (Fade, Float
+In, Fly In, Zoom) with the same delays and durations; build steps become
+clicks. Webfonts are referenced by name, not embedded.
+
 ## Exported file
 
 The download is a self-contained presentation, not a scroll of slides: one

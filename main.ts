@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { deckToHtml, fileSlug } from "./src/html.ts";
+import { PPTX_MIME, deckToPptx } from "./src/pptx.ts";
 import { deckStore } from "./src/store.ts";
 import { createServer } from "./server.ts";
 
@@ -102,6 +103,25 @@ async function start() {
       res.json({ id, url: `${publicBaseUrl(req)}/download/${id}` });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : "Invalid deck" });
+    }
+  });
+
+  // PowerPoint export of the same snapshot. Declared before the plain route
+  // so ":id" never swallows the extension.
+  app.get("/download/:id.pptx", async (req, res) => {
+    const deck = deckStore.readSnapshot(String(req.params.id));
+    if (!deck) {
+      res.status(404).type("text/plain").send("This download link has expired. Press PPTX in the editor again.\n");
+      return;
+    }
+    try {
+      const bytes = await deckToPptx(deck);
+      res.setHeader("Content-Disposition", `attachment; filename="${fileSlug(deck.title)}.pptx"`);
+      res.setHeader("Cache-Control", "no-store");
+      res.type(PPTX_MIME).send(Buffer.from(bytes));
+    } catch (error) {
+      console.error("PPTX export failed:", error);
+      res.status(500).type("text/plain").send("Could not build the PowerPoint file. Please try again.\n");
     }
   });
 

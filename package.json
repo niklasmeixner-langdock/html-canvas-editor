@@ -16,8 +16,10 @@
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^1.0.1",
     "@modelcontextprotocol/sdk": "^1.25.2",
+    "@resvg/resvg-js": "^2.6.2",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "jszip": "^3.10.2",
     "tsx": "^4.20.5",
     "zod": "^3.25.76"
   },

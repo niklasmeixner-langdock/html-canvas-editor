@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 // zod v4 API: `.meta({ format: "file" })` is how Langdock detects file inputs.
 import { z } from "zod/v4";
 import { deckToHtml, deckSummary, fileSlug } from "./src/html.ts";
+import { PPTX_MIME, deckToPptx } from "./src/pptx.ts";
 import { deckStore } from "./src/store.ts";
 import type { Deck } from "./src/types.ts";
 
@@ -17,8 +18,8 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const CANVAS_URI = "ui://html-canvas/editor.html";
 const BASE_URL_MARKER = 'window.__CANVAS_BASE__=""';
 
-export function deckFileUri(deckId: string): string {
-  return `file:///slides/${deckId}.html`;
+export function deckFileUri(deckId: string, ext: "html" | "pptx" = "html"): string {
+  return `file:///slides/${deckId}.${ext}`;
 }
 
 const deckSchema = z.object({
@@ -170,7 +171,7 @@ export function createServer(baseUrl = ""): McpServer {
       instructions: [
         "Slide canvas: a Figma-like editor for 16:9 HTML slides that the user edits directly, without prompting you for each change.",
         "Use open_slide_canvas whenever the user wants to see, edit, or start slides. If they attached an .html file, pass it in the `file` parameter directly; never read the file or paste its path into `html`.",
-        "The canvas persists its own edits. Only call export_slides_html when the user asks for the HTML or a downloadable file; it needs the deckId from open_slide_canvas.",
+        "The canvas persists its own edits. Only call export_slides_html (HTML) or export_slides_pptx (PowerPoint) when the user asks for the file or a download; both need the deckId from open_slide_canvas.",
         "Do not call save_deck; the canvas UI does that.",
       ].join(" "),
     },
@@ -291,6 +292,57 @@ export function createServer(baseUrl = ""): McpServer {
       if (!deck) throw new Error(`Unknown deck ${String(deckId)}`);
       return {
         contents: [{ uri: uri.href, mimeType: "text/html", text: deckToHtml(deck) }],
+      };
+    },
+  );
+
+  server.registerTool(
+    "export_slides_pptx",
+    {
+      title: "Export slides as PowerPoint",
+      description: [
+        "Return the deck as a .pptx with native, editable shapes (text boxes, pictures, rectangles) and the entrance animations as PowerPoint animations.",
+        "Use only when the user asks for PowerPoint / pptx. The result includes a resource link; read it to hand the user the file as an attachment.",
+      ].join(" "),
+      inputSchema: { deckId: deckIdSchema },
+    },
+    async ({ deckId }) => {
+      const deck = deckStore.get(deckId);
+      if (!deck) return unknownDeck(deckId);
+      const id = deckStore.snapshot(deck);
+      return {
+        content: [
+          { type: "text" as const, text: `${deckSummary(deck)}. Read the linked resource to attach the PowerPoint file.` },
+          {
+            type: "resource_link" as const,
+            uri: deckFileUri(deck.id!, "pptx"),
+            name: `${fileSlug(deck.title)}.pptx`,
+            mimeType: PPTX_MIME,
+            description: "Read this resource to attach the deck as a downloadable .pptx",
+          },
+        ],
+        structuredContent: {
+          deckId: deck.id,
+          downloadUrl: baseUrl ? `${baseUrl}/download/${id}.pptx` : undefined,
+        },
+      };
+    },
+  );
+
+  server.registerResource(
+    "deck-pptx",
+    new ResourceTemplate("file:///slides/{deckId}.pptx", { list: undefined }),
+    {
+      title: "Slide deck PowerPoint file",
+      description: "The deck with this id as a downloadable .pptx.",
+      mimeType: PPTX_MIME,
+    },
+    async (uri, { deckId }) => {
+      const deck = deckStore.get(String(deckId));
+      if (!deck) throw new Error(`Unknown deck ${String(deckId)}`);
+      const bytes = await deckToPptx(deck);
+      return {
+        contents: [{ uri: uri.href, mimeType: PPTX_MIME, blob: Buffer.from(bytes).toString("base64") }],
       };
     },
   );
