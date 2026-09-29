@@ -655,6 +655,24 @@ button.btn.icon[aria-pressed="true"] {
   pointer-events: none;
 }
 
+/* Multi-selection: thin box per layer, dashed box around the group. */
+.sel.multi {
+  border-width: 1px;
+}
+
+.sel.group {
+  border: 1.5px dashed var(--handle);
+  background: transparent;
+}
+
+/* Drag-to-select rectangle. */
+.marquee {
+  position: absolute;
+  border: 1px solid var(--handle);
+  background: var(--accent-soft);
+  pointer-events: none;
+}
+
 .handle {
   position: absolute;
   width: 10px;

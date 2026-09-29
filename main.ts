@@ -54,7 +54,8 @@ async function start() {
 
   const app = express();
   app.use(cors());
-  app.use(express.json({ limit: "12mb" }));
+  // Decks carry their images and fonts inline.
+  app.use(express.json({ limit: "64mb" }));
 
   app.get("/health", (_req, res) => {
     res.type("text/plain").send("ok\n");

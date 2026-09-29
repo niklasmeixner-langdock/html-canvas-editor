@@ -28,10 +28,30 @@ function slideAt(deck: Deck, index: number): Slide {
   return deck.slides[index] ?? deck.slides[0]!;
 }
 
+/**
+ * Snapshot for history/save. Decks carry megabytes of base64 (embedded
+ * fonts, images); cloning that on every edit is what made big decks stall.
+ * Slides are cloned (they are what changes), the heavy strings are shared:
+ * `fontCss`/`rawHtml` never change, and image `src` is replaced, never
+ * mutated, so sharing is safe.
+ */
+function snapshot(deck: Deck): Deck {
+  return {
+    ...deck,
+    slides: deck.slides.map((slide) => ({
+      ...slide,
+      components: slide.components.map((component) => ({ ...component, animation: component.animation && { ...component.animation } })),
+    })),
+  };
+}
+
+const HISTORY_LIMIT = 40;
+
 export class SlideEditor {
   deck: Deck;
   slideIndex = 0;
-  selectedId: string | null = null;
+  /** Selected layer ids, in selection order. The last one drives the props panel. */
+  selectedIds: string[] = [];
   tool: Tool = "select";
   zoom = 0.4;
   panX = 48;
@@ -56,19 +76,40 @@ export class SlideEditor {
   private lastClick: { id: string; at: number } | null = null;
   private drag:
     | {
-        kind: "move" | "resize" | "pan";
+        kind: "move" | "resize" | "pan" | "marquee";
         handle?: Handle;
         startX: number;
         startY: number;
         origin: SlideComponent;
+        /** Every selected layer as it was when the drag started (move). */
+        origins?: SlideComponent[];
+        /** Marquee: selection to keep when Shift was held. */
+        keep?: string[];
         moved: boolean;
       }
     | null = null;
 
+  /** Primary selection: the most recently selected layer. */
+  get selectedId(): string | null {
+    return this.selectedIds[this.selectedIds.length - 1] ?? null;
+  }
+
+  set selectedId(id: string | null) {
+    this.selectedIds = id ? [id] : [];
+  }
+
+  private isSelected(id: string): boolean {
+    return this.selectedIds.includes(id);
+  }
+
+  private selectedAll(): SlideComponent[] {
+    return this.current().components.filter((component) => this.isSelected(component.id));
+  }
+
   constructor(private readonly root: HTMLElement, deck: Deck) {
-    this.deck = structuredClone(deck);
+    this.deck = snapshot(deck);
     ensureFontStyles(this.deck.fontCss);
-    this.committed = structuredClone(deck);
+    this.committed = snapshot(deck);
     this.bind();
     this.fit();
     this.render();
@@ -77,9 +118,9 @@ export class SlideEditor {
 
   setDeck(deck: Deck, status = "Loaded") {
     this.finishTextEdit();
-    this.deck = structuredClone(deck);
+    this.deck = snapshot(deck);
     ensureFontStyles(this.deck.fontCss);
-    this.committed = structuredClone(deck);
+    this.committed = snapshot(deck);
     this.slideIndex = 0;
     this.selectedId = null;
     this.history = [];
@@ -91,7 +132,7 @@ export class SlideEditor {
 
   getDeck(): Deck {
     this.finishTextEdit();
-    return structuredClone(this.deck);
+    return snapshot(this.deck);
   }
 
   /** The surface changed (display mode, panels): fit the slide again. */
@@ -121,12 +162,12 @@ export class SlideEditor {
       flattened.title = this.deck.title || flattened.title;
       flattened.id = this.deck.id;
       this.deck = flattened;
-      this.committed = structuredClone(flattened);
+      this.committed = snapshot(flattened);
       this.history = [];
       this.future = [];
       this.status = "Imported slide is editable";
       this.render();
-      this.onChange?.(this.getDeck());
+      this.onChange?.(this.committed);
     } catch (error) {
       this.status = error instanceof Error ? error.message : "Import failed";
       this.renderStatus();
@@ -148,14 +189,15 @@ export class SlideEditor {
     // the props panel). Close it first so this change is never dropped.
     if (this.editing) this.finishTextEdit(false);
     this.history.push(this.committed);
-    if (this.history.length > 60) this.history.shift();
+    if (this.history.length > HISTORY_LIMIT) this.history.shift();
     this.future = [];
     this.deck.updatedAt = new Date().toISOString();
     this.deck.source = "user";
     delete this.deck.rawHtml;
-    this.committed = structuredClone(this.deck);
+    this.committed = snapshot(this.deck);
     if (label) this.status = label;
-    this.onChange?.(this.getDeck());
+    // The committed snapshot is never mutated, so it can go out as-is.
+    this.onChange?.(this.committed);
     if (redraw) this.render();
   }
 
@@ -340,9 +382,10 @@ export class SlideEditor {
     }
 
     const hit = this.hit(point.x, point.y);
+    const additive = event.shiftKey || event.metaKey || event.ctrlKey;
     const now = performance.now();
     const isDouble =
-      !!hit && !!this.lastClick && this.lastClick.id === hit.id && now - this.lastClick.at < 450;
+      !additive && !!hit && !!this.lastClick && this.lastClick.id === hit.id && now - this.lastClick.at < 450;
     this.lastClick = hit ? { id: hit.id, at: now } : null;
 
     if (hit && isDouble && hit.type === "text") {
@@ -355,26 +398,59 @@ export class SlideEditor {
       return;
     }
 
-    const changed = (hit?.id ?? null) !== this.selectedId;
-    this.selectedId = hit?.id ?? null;
+    const before = this.selectedIds.join(" ");
     if (hit) {
+      if (additive) {
+        // Shift/⌘-click toggles membership; nothing moves on this press.
+        this.selectedIds = this.isSelected(hit.id)
+          ? this.selectedIds.filter((id) => id !== hit.id)
+          : [...this.selectedIds, hit.id];
+      } else {
+        // Pressing a layer that is already part of the selection keeps the
+        // group, so a multi-selection can be dragged as one.
+        if (!this.isSelected(hit.id)) this.selectedId = hit.id;
+        this.drag = {
+          kind: "move",
+          startX: event.clientX,
+          startY: event.clientY,
+          origin: structuredClone(hit),
+          origins: this.selectedAll().map((component) => structuredClone(component)),
+          moved: false,
+        };
+      }
+    } else if (this.insideSlide(point)) {
+      // Empty slide area: drag a marquee to select several layers. Shift
+      // adds to the current selection; a plain click clears it.
       this.drag = {
-        kind: "move",
-        startX: event.clientX,
-        startY: event.clientY,
-        origin: structuredClone(hit),
+        kind: "marquee",
+        startX: point.x,
+        startY: point.y,
+        origin: defaultComponent("container", point.x, point.y),
+        keep: additive ? [...this.selectedIds] : [],
         moved: false,
       };
+      if (!additive) this.selectedIds = [];
     } else {
-      // Empty canvas or empty slide area: a plain click deselects, dragging
-      // pans, like every other canvas tool.
+      // Grey canvas around the slide: drag pans, like every other canvas tool.
       this.startPan(event);
     }
     this.renderOverlay();
-    if (changed) {
+    if (before !== this.selectedIds.join(" ")) {
       this.renderLayers();
       this.renderProps();
     }
+  }
+
+  private insideSlide(point: { x: number; y: number }): boolean {
+    return point.x >= 0 && point.y >= 0 && point.x <= SLIDE_WIDTH && point.y <= SLIDE_HEIGHT;
+  }
+
+  /** Marquee rectangle in slide coordinates, from the drag start to `point`. */
+  private marqueeRect(point: { x: number; y: number }) {
+    const drag = this.drag!;
+    const x = Math.min(drag.startX, point.x);
+    const y = Math.min(drag.startY, point.y);
+    return { x, y, width: Math.abs(point.x - drag.startX), height: Math.abs(point.y - drag.startY) };
   }
 
   private onPointerMove(event: PointerEvent) {
@@ -386,6 +462,20 @@ export class SlideEditor {
       return;
     }
 
+    if (this.drag.kind === "marquee") {
+      const point = this.clientToSlide(event);
+      const rect = this.marqueeRect(point);
+      if (rect.width > DRAG_THRESHOLD || rect.height > DRAG_THRESHOLD) this.drag.moved = true;
+      const keep = this.drag.keep ?? [];
+      const inside = this.current()
+        .components.filter((c) => intersects(rect, c) && !keep.includes(c.id))
+        .map((c) => c.id);
+      this.selectedIds = [...keep, ...inside];
+      this.renderOverlay();
+      this.renderMarquee(rect);
+      return;
+    }
+
     const dist = Math.hypot(event.clientX - this.drag.startX, event.clientY - this.drag.startY);
     if (dist > DRAG_THRESHOLD) this.drag.moved = true;
     if (!this.drag.moved && this.drag.kind === "move") return;
@@ -394,18 +484,64 @@ export class SlideEditor {
     const rect = this.el("slide").getBoundingClientRect();
     const dx = ((event.clientX - this.drag.startX) / rect.width) * SLIDE_WIDTH;
     const dy = ((event.clientY - this.drag.startY) / rect.height) * SLIDE_HEIGHT;
-    const origin = this.drag.origin;
-    const next =
-      this.drag.kind === "move"
-        ? { ...origin, x: snap(origin.x + dx, useGrid), y: snap(origin.y + dy, useGrid) }
-        : resizeBox(origin, this.drag.handle!, dx, dy, useGrid);
-
     const slide = this.current();
-    const index = slide.components.findIndex((component) => component.id === origin.id);
-    if (index < 0) return;
-    slide.components[index] = clampComponent(next);
-    this.renderSlide();
+
+    if (this.drag.kind === "move") {
+      // Snap the primary layer; the rest keep their offsets so the group
+      // does not drift apart.
+      const origin = this.drag.origin;
+      const sx = snap(origin.x + dx, useGrid) - origin.x;
+      const sy = snap(origin.y + dy, useGrid) - origin.y;
+      // Clamp as a group: nobody moves further than the tightest layer allows.
+      let gx = sx;
+      let gy = sy;
+      for (const o of this.drag.origins ?? [origin]) {
+        gx = Math.max(-o.x, Math.min(gx, SLIDE_WIDTH - o.width - o.x));
+        gy = Math.max(-o.y, Math.min(gy, SLIDE_HEIGHT - o.height - o.y));
+      }
+      for (const o of this.drag.origins ?? [origin]) {
+        const index = slide.components.findIndex((component) => component.id === o.id);
+        if (index < 0) continue;
+        slide.components[index] = { ...slide.components[index]!, x: o.x + gx, y: o.y + gy };
+        this.positionNode(slide.components[index]!);
+      }
+    } else {
+      const origin = this.drag.origin;
+      const index = slide.components.findIndex((component) => component.id === origin.id);
+      if (index < 0) return;
+      slide.components[index] = clampComponent(resizeBox(origin, this.drag.handle!, dx, dy, useGrid));
+      this.positionNode(slide.components[index]!);
+    }
     this.renderOverlay();
+  }
+
+  /** Move/resize the existing DOM node instead of rebuilding the slide (images
+   *  and fonts would otherwise be re-created on every pointer move). */
+  private positionNode(component: SlideComponent) {
+    const el = this.root.querySelector<HTMLElement>(`#slide .el[data-id="${component.id}"]`);
+    if (!el) return;
+    el.style.left = `${component.x}px`;
+    el.style.top = `${component.y}px`;
+    el.style.width = `${component.width}px`;
+    el.style.height = `${component.height}px`;
+  }
+
+  private renderMarquee(rect: { x: number; y: number; width: number; height: number } | null) {
+    const overlay = this.el("overlay");
+    let box = overlay.querySelector<HTMLElement>(".marquee");
+    if (!rect) {
+      box?.remove();
+      return;
+    }
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "marquee";
+      overlay.append(box);
+    }
+    box.style.left = `${rect.x}px`;
+    box.style.top = `${rect.y}px`;
+    box.style.width = `${rect.width}px`;
+    box.style.height = `${rect.height}px`;
   }
 
   private onPointerUp() {
@@ -416,8 +552,18 @@ export class SlideEditor {
       this.el("viewport").classList.remove("panning");
       return;
     }
+    if (drag.kind === "marquee") {
+      this.renderMarquee(null);
+      this.renderOverlay();
+      this.renderLayers();
+      this.renderProps();
+      const n = this.selectedIds.length;
+      this.status = n ? `${n} layer${n === 1 ? "" : "s"} selected` : "Select";
+      this.renderStatus();
+      return;
+    }
     if (drag.moved) {
-      this.commit("Moved");
+      this.commit(drag.kind === "resize" ? "Resized" : (drag.origins?.length ?? 1) > 1 ? `Moved ${drag.origins!.length} layers` : "Moved");
     }
     // Plain clicks only select. Text editing starts on double-click or Enter
     // so users never end up in edit mode without noticing.
@@ -532,21 +678,26 @@ export class SlideEditor {
   }
 
   private removeSelected() {
-    if (!this.selectedId) return;
-    this.current().components = this.current().components.filter(
-      (component) => component.id !== this.selectedId,
-    );
-    this.selectedId = null;
-    this.commit("Deleted");
+    const n = this.selectedIds.length;
+    if (!n) return;
+    this.current().components = this.current().components.filter((component) => !this.isSelected(component.id));
+    this.selectedIds = [];
+    this.commit(n > 1 ? `Deleted ${n} layers` : "Deleted");
   }
 
+  /** Move the selection one step in z-order, keeping its internal order. */
   private nudgeLayer(direction: 1 | -1) {
     const slide = this.current();
-    const index = slide.components.findIndex((component) => component.id === this.selectedId);
-    const next = index + direction;
-    if (index < 0 || next < 0 || next >= slide.components.length) return;
-    const [item] = slide.components.splice(index, 1);
-    slide.components.splice(next, 0, item!);
+    const items = slide.components;
+    const indices = items.map((c, i) => (this.isSelected(c.id) ? i : -1)).filter((i) => i >= 0);
+    if (!indices.length) return;
+    if (direction > 0) {
+      if (indices[indices.length - 1] === items.length - 1) return;
+      for (const i of [...indices].reverse()) [items[i], items[i + 1]] = [items[i + 1]!, items[i]!];
+    } else {
+      if (indices[0] === 0) return;
+      for (const i of indices) [items[i], items[i - 1]] = [items[i - 1]!, items[i]!];
+    }
     this.commit(direction > 0 ? "Brought forward" : "Sent back");
   }
 
@@ -586,6 +737,11 @@ export class SlideEditor {
       this.duplicate();
       return;
     }
+    if (meta && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      this.selectAll();
+      return;
+    }
     if (event.key === "Enter" && this.selected()?.type === "text") {
       event.preventDefault();
       this.startTextEdit();
@@ -602,34 +758,57 @@ export class SlideEditor {
       this.render();
       return;
     }
-    const selected = this.selected();
-    if (!selected) return;
+    if (!this.selectedIds.length) return;
     const step = event.shiftKey ? 10 : 1;
-    const map: Record<string, Partial<SlideComponent>> = {
-      ArrowLeft: { x: selected.x - step },
-      ArrowRight: { x: selected.x + step },
-      ArrowUp: { y: selected.y - step },
-      ArrowDown: { y: selected.y + step },
+    const delta: Record<string, [number, number]> = {
+      ArrowLeft: [-step, 0],
+      ArrowRight: [step, 0],
+      ArrowUp: [0, -step],
+      ArrowDown: [0, step],
     };
-    if (map[event.key]) {
+    const d = delta[event.key];
+    if (d) {
       event.preventDefault();
-      this.mutateSelected(map[event.key]!, "Nudged");
+      this.mutateAll((c) => ({ x: c.x + d[0], y: c.y + d[1] }), "Nudged");
     }
   }
 
   private duplicate() {
-    const selected = this.selected();
-    if (!selected) return;
-    const copy = clampComponent({
-      ...structuredClone(selected),
-      id: uid(selected.type),
-      x: selected.x + 24,
-      y: selected.y + 24,
-      name: `${selected.name} copy`,
+    const selected = this.selectedAll();
+    if (!selected.length) return;
+    const copies = selected.map((component) =>
+      clampComponent({
+        ...structuredClone(component),
+        id: uid(component.type),
+        x: component.x + 24,
+        y: component.y + 24,
+        name: `${component.name} copy`,
+      }),
+    );
+    this.current().components.push(...copies);
+    this.selectedIds = copies.map((copy) => copy.id);
+    this.commit(copies.length > 1 ? `Duplicated ${copies.length} layers` : "Duplicated");
+  }
+
+  private selectAll() {
+    this.selectedIds = this.current().components.map((component) => component.id);
+    this.status = `${this.selectedIds.length} layers selected`;
+    this.renderOverlay();
+    this.renderLayers();
+    this.renderProps();
+    this.renderStatus();
+  }
+
+  /** Apply a patch to every selected layer, as one history step. */
+  private mutateAll(patch: (component: SlideComponent) => Partial<SlideComponent>, label?: string) {
+    const slide = this.current();
+    let changed = false;
+    slide.components = slide.components.map((component) => {
+      if (!this.isSelected(component.id)) return component;
+      changed = true;
+      return clampComponent({ ...component, ...patch(component) });
     });
-    this.current().components.push(copy);
-    this.selectedId = copy.id;
-    this.commit("Duplicated");
+    if (changed) this.commit(label);
   }
 
   private undo() {
@@ -637,11 +816,11 @@ export class SlideEditor {
     const previous = this.history.pop();
     if (!previous) return;
     this.future.push(this.committed);
-    this.deck = structuredClone(previous);
+    this.deck = snapshot(previous);
     this.committed = previous;
     this.clampSelection();
     this.status = "Undo";
-    this.onChange?.(this.getDeck());
+    this.onChange?.(this.committed);
     this.render();
   }
 
@@ -649,18 +828,19 @@ export class SlideEditor {
     const next = this.future.pop();
     if (!next) return;
     this.history.push(this.committed);
-    this.deck = structuredClone(next);
+    this.deck = snapshot(next);
     this.committed = next;
     this.clampSelection();
     this.status = "Redo";
-    this.onChange?.(this.getDeck());
+    this.onChange?.(this.committed);
     this.render();
   }
 
   /** After undo/redo the current slide or selected component may be gone. */
   private clampSelection() {
     this.slideIndex = Math.min(this.slideIndex, this.deck.slides.length - 1);
-    if (this.selectedId && !this.selected()) this.selectedId = null;
+    const ids = new Set(this.current().components.map((component) => component.id));
+    this.selectedIds = this.selectedIds.filter((id) => ids.has(id));
   }
 
   render() {
@@ -741,22 +921,39 @@ export class SlideEditor {
 
   private renderOverlay() {
     const overlay = this.el("overlay");
-    overlay.replaceChildren();
-    const selected = this.selected();
-    if (!selected || this.editing) return;
-    const box = document.createElement("div");
-    box.className = "sel";
-    box.style.left = `${selected.x}px`;
-    box.style.top = `${selected.y}px`;
-    box.style.width = `${selected.width}px`;
-    box.style.height = `${selected.height}px`;
-    for (const handle of HANDLES) {
-      const node = document.createElement("div");
-      node.className = `handle ${handle}`;
-      node.dataset.handle = handle;
-      box.append(node);
+    const marquee = overlay.querySelector(".marquee");
+    overlay.replaceChildren(...(marquee ? [marquee] : []));
+    if (this.editing) return;
+    const selected = this.selectedAll();
+    if (!selected.length) return;
+    const single = selected.length === 1;
+    for (const component of selected) {
+      const box = document.createElement("div");
+      box.className = single ? "sel" : "sel multi";
+      box.style.left = `${component.x}px`;
+      box.style.top = `${component.y}px`;
+      box.style.width = `${component.width}px`;
+      box.style.height = `${component.height}px`;
+      if (single) {
+        for (const handle of HANDLES) {
+          const node = document.createElement("div");
+          node.className = `handle ${handle}`;
+          node.dataset.handle = handle;
+          box.append(node);
+        }
+      }
+      overlay.append(box);
     }
-    overlay.append(box);
+    if (!single) {
+      const bounds = groupBounds(selected);
+      const group = document.createElement("div");
+      group.className = "sel group";
+      group.style.left = `${bounds.x}px`;
+      group.style.top = `${bounds.y}px`;
+      group.style.width = `${bounds.width}px`;
+      group.style.height = `${bounds.height}px`;
+      overlay.append(group);
+    }
   }
 
   private renderLayers() {
@@ -766,15 +963,20 @@ export class SlideEditor {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "layer";
-      button.dataset.active = String(component.id === this.selectedId);
+      button.dataset.active = String(this.isSelected(component.id));
       const anim = component.animation;
       const badge = anim
         ? `<i class="anim-badge" title="${escape(describeAnimation(anim))}">${anim.step ? `▶${anim.step}` : "▶"}</i>`
         : "";
       button.innerHTML = `<small>${component.type}</small><span>${escape(component.name)}</span>${badge}`;
-      button.addEventListener("click", () => {
-        this.selectedId = component.id;
-        this.renderSlide();
+      button.addEventListener("click", (event) => {
+        if (event.shiftKey || event.metaKey || event.ctrlKey) {
+          this.selectedIds = this.isSelected(component.id)
+            ? this.selectedIds.filter((id) => id !== component.id)
+            : [...this.selectedIds, component.id];
+        } else {
+          this.selectedId = component.id;
+        }
         this.renderOverlay();
         this.renderLayers();
         this.renderProps();
@@ -833,6 +1035,34 @@ export class SlideEditor {
         this.deck.title = value;
         this.commit("Renamed deck");
       });
+      return;
+    }
+
+    if (this.selectedIds.length > 1) {
+      const group = this.selectedAll();
+      const bounds = groupBounds(group);
+      props.innerHTML = `
+        <h2>${group.length} layers</h2>
+        <div class="xywh">
+          ${numField("X", "group-x", bounds.x)}
+          ${numField("Y", "group-y", bounds.y)}
+        </div>
+        <div class="prop-row">
+          <button class="btn" id="group-dup" type="button">Duplicate</button>
+          <button class="btn" id="group-del" type="button">Delete</button>
+        </div>
+        <p class="empty-props">Drag to move them together, arrow keys to nudge. Shift-click adds or removes a layer; click empty slide space to start over.</p>
+      `;
+      this.bindField("group-x", (value) => {
+        const dx = Number(value) - bounds.x;
+        this.mutateAll((c) => ({ x: c.x + dx }), "Moved");
+      });
+      this.bindField("group-y", (value) => {
+        const dy = Number(value) - bounds.y;
+        this.mutateAll((c) => ({ y: c.y + dy }), "Moved");
+      });
+      props.querySelector("#group-dup")?.addEventListener("click", () => this.duplicate());
+      props.querySelector("#group-del")?.addEventListener("click", () => this.removeSelected());
       return;
     }
 
@@ -983,6 +1213,24 @@ export class SlideEditor {
 function describeAnimation(anim: LayerAnimation): string {
   const when = anim.step ? `build step ${anim.step}` : anim.delay ? `after ${anim.delay} ms` : "with the slide";
   return `${anim.effect.replace("-", " ")} · ${anim.duration} ms · ${when}`;
+}
+
+function intersects(
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number },
+): boolean {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+function groupBounds(items: SlideComponent[]): { x: number; y: number; width: number; height: number } {
+  const x = Math.min(...items.map((c) => c.x));
+  const y = Math.min(...items.map((c) => c.y));
+  return {
+    x,
+    y,
+    width: Math.max(...items.map((c) => c.x + c.width)) - x,
+    height: Math.max(...items.map((c) => c.y + c.height)) - y,
+  };
 }
 
 function numField(label: string, id: string, value: number): string {

@@ -188,15 +188,41 @@ function deckForSave(): Deck {
   return deck as Deck;
 }
 
-/** Write the deck straight to our server (no host in between, 12 MB limit). */
-async function putDeck(deck: Deck): Promise<Deck> {
-  const response = await fetch(`${serverBase}/api/decks/${encodeURIComponent(deck.id!)}`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(deck),
-  });
-  if (!response.ok) throw new Error(`Save failed (${response.status})`);
-  return (await response.json()) as Deck;
+/**
+ * Write the deck straight to our server (no host in between).
+ *
+ * Saves are serialised: one request in flight, the newest deck queued behind
+ * it. Two overlapping PUTs of a multi-megabyte deck could otherwise finish in
+ * the wrong order and leave an older state on the server. A stuck request is
+ * abandoned after 45 s so the UI never sits on "Saving…" forever.
+ */
+let inflight: Promise<Deck> | null = null;
+let queued: Deck | null = null;
+
+function putDeck(deck: Deck): Promise<Deck> {
+  if (inflight) {
+    queued = deck;
+    return inflight.then(() => (queued === deck ? putDeck(deck) : queued ? putDeck(queued) : deck));
+  }
+  inflight = (async () => {
+    try {
+      const response = await fetch(`${serverBase}/api/decks/${encodeURIComponent(deck.id!)}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(deck),
+        signal: AbortSignal.timeout(45_000),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? `Save failed (${response.status})`);
+      }
+      return (await response.json()) as Deck;
+    } finally {
+      inflight = null;
+      if (queued === deck) queued = null;
+    }
+  })();
+  return inflight;
 }
 
 async function saveStandalone() {

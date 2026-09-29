@@ -41,8 +41,9 @@ Attach a slide in chat and say "open this in the canvas" — one tool call.
 MCP hosts call this server statelessly and send no per-conversation identity,
 so every deck gets a server-minted id and **all** state is keyed by it. There
 is no "current deck": a caller only reaches a deck whose id they were given.
-Imports always mint a new id (exported files carry none). Decks live in memory
-for 7 days.
+Imports always mint a new id (exported files carry none). Decks are kept for
+7 days, in memory and on disk (`DATA_DIR`, default `./data`; on Railway a
+volume at `/data`), so a restart or redeploy keeps everyone's edits.
 
 ## Download inside Langdock
 
@@ -147,6 +148,9 @@ slide at a time, scaled to the window (letterboxed 16:9), no dependencies.
 - 1920×1080 slides, 8px snap (hold Alt to disable)
 - Navigation like Figma: drag empty canvas (or Space/middle-drag) to pan,
   scroll to pan, ⌘/Ctrl+scroll or pinch to zoom around the cursor, Fit to reset
+- Multi-select: drag a marquee on empty slide space, Shift/⌘-click to add or
+  remove layers (canvas or layer list), ⌘A for all. Move, nudge, duplicate,
+  delete and reorder act on the whole selection.
 - Insert **text**, **image**, or **frame**
 - Drag to move, handles to resize, double-click text to edit
 - Layers, undo (`⌘Z`), duplicate (`⌘D`), arrow-key nudge
