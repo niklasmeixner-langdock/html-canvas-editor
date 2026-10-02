@@ -529,6 +529,17 @@ button.btn.icon[aria-pressed="true"] {
   border-color: var(--line-hover);
 }
 
+/* Download buttons: icon + format. */
+button.btn.download {
+  gap: 5px;
+  padding-left: 8px;
+}
+button.btn.download .dl {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
 /* Inline chat card: slides only. */
 #app[data-mode="inline"] {
   grid-template-rows: 40px minmax(0, 1fr) 68px;

@@ -48,7 +48,7 @@ volume at `/data`), so a restart or redeploy keeps everyone's edits.
 ## Download inside Langdock
 
 Langdock mounts the app in a sandbox without `allow-downloads`, so a plain
-`<a download>` is a no-op there. The Download button therefore posts the deck
+`<a download>` is a no-op there. The HTML and PPTX buttons therefore post the deck
 on screen to `/api/snapshots` and asks the host to open `/download/:id` in a
 new tab; it does not wait on a save. The server injects its public URL into the
 app HTML for this; set `PUBLIC_URL` if it sits behind a proxy that hides the
@@ -131,7 +131,7 @@ tables, SmartArt, custom geometry outlines (drawn as rectangles), video.
 
 ## PowerPoint export
 
-`PPTX` in the top bar (or the `export_slides_pptx` tool) writes a `.pptx`
+`PPTX` in the top bar (next to `HTML`; or the `export_slides_pptx` tool) writes a `.pptx`
 with native shapes, generated directly as Office Open XML (`src/pptx.ts`, no
 pptxgenjs): text boxes keep font, size, weight, colour, alignment, line
 height and letter spacing; rectangles keep fill (solid or linear gradient),
