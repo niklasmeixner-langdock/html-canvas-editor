@@ -17,6 +17,7 @@
     "@modelcontextprotocol/ext-apps": "^1.0.1",
     "@modelcontextprotocol/sdk": "^1.25.2",
     "@resvg/resvg-js": "^2.6.2",
+    "@xmldom/xmldom": "^0.9.12",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "jszip": "^3.10.2",

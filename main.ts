@@ -63,14 +63,17 @@ async function start() {
 
   // Standalone editor API (the MCP path goes through tools). Everything is
   // keyed by deck id; there is no server-wide current deck.
-  app.post("/api/decks", (req, res) => {
+  app.post("/api/decks", async (req, res) => {
     try {
       const html = typeof req.body?.html === "string" ? req.body.html : "";
-      const deck = html.trim()
-        ? deckStore.createFromHtml(html, "user")
-        : req.body?.sample
-          ? deckStore.createSample()
-          : deckStore.createBlank(typeof req.body?.title === "string" ? req.body.title : undefined);
+      const pptx = typeof req.body?.pptxBase64 === "string" ? req.body.pptxBase64 : "";
+      const deck = pptx
+        ? await deckStore.createFromPptx(new Uint8Array(Buffer.from(pptx, "base64")), "user", typeof req.body?.title === "string" ? req.body.title : undefined)
+        : html.trim()
+          ? deckStore.createFromHtml(html, "user")
+          : req.body?.sample
+            ? deckStore.createSample()
+            : deckStore.createBlank(typeof req.body?.title === "string" ? req.body.title : undefined);
       res.json(deck);
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : "Invalid deck" });

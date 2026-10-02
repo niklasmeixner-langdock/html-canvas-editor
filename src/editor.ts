@@ -1021,7 +1021,7 @@ export class SlideEditor {
         <div class="field"><label>Name</label><input id="slide-name" value="${escape(this.current().name)}" /></div>
         <div class="field"><label>Background</label><input id="slide-bg" type="color" value="${cssColorToHex(this.current().background)}" /></div>
         <div class="field"><label>Deck title</label><input id="deck-name" value="${escape(this.deck.title)}" /></div>
-        <p class="empty-props">Click a layer to edit. Double-click or press Enter to change text. Attach an .html deck in chat to edit it here.</p>
+        <p class="empty-props">Click a layer to edit. Double-click or press Enter to change text. Attach an .html or .pptx deck in chat to edit it here.</p>
       `;
       this.bindField("slide-name", (value) => {
         this.current().name = value;

@@ -1,6 +1,6 @@
-# HTML slide canvas
+# Slide canvas
 
-Figma-like **16:9 HTML slide editor**. The agent can drop a first draft in; you move type, frames, and images without another prompt.
+Figma-like **16:9 slide editor** for HTML decks and PowerPoint files. The agent can drop a first draft in; you move type, frames, and images without another prompt. Attach an `.html` or a `.pptx` — both open as the same editable layers, and either can be downloaded as HTML (animations included) or as `.pptx`.
 
 This is a standalone MCP App. Same pattern as the Camunda canvas: a real iframe UI plus `/mcp`.
 
@@ -112,6 +112,22 @@ fade-ups produce faint, displaced layers). The deck's webfont CSS
 (`@import`/`@font-face`) travels with it as `fontCss`, so the editor and the
 export wrap text exactly like the source did; `letter-spacing` and
 `text-transform` are captured for the same reason.
+
+## PowerPoint import
+
+`open_slide_canvas` takes `.pptx` in the same `file` parameter as HTML; the
+server sniffs the bytes, so the model never has to say which it is.
+`src/pptx-import.ts` reads the package directly: slide size is letterboxed
+into 1920×1080; shapes, pictures and groups become layers; placeholders
+resolve geometry, fills and text styles through layout → master → theme
+(`clrMap`, scheme colours with tint/shade/alpha, `+mj-lt`/`+mn-lt` fonts,
+`txStyles` and `lstStyle` levels, bullets, caps, insets, line spacing);
+master and layout decoration is included unless the slide hides it.
+Middle/bottom anchored text is pinned to that side of its frame. Entrance
+effects in the timing tree map back to the editor's animations (fade, fade
+up/down/left/right, scale) with their delays and click steps, so a PPTX
+you open here downloads as HTML with the same builds. Not imported: charts,
+tables, SmartArt, custom geometry outlines (drawn as rectangles), video.
 
 ## PowerPoint export
 

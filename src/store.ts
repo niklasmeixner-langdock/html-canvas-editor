@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { htmlToDeck } from "./html.ts";
+import { pptxToDeck } from "./pptx-import.ts";
 import { sampleDeck } from "./sample.ts";
 import type { Deck, DeckSource } from "./types.ts";
 import { emptyDeck, emptySlide } from "./types.ts";
@@ -139,6 +140,11 @@ export const deckStore = {
   /** Parse HTML (exported deck, single slide, or arbitrary page) into a new deck. */
   createFromHtml(html: string, source: DeckSource): Deck {
     return this.create(htmlToDeck(html), source);
+  },
+
+  /** Parse a .pptx into a new deck; every shape becomes a layer. */
+  async createFromPptx(bytes: Uint8Array, source: DeckSource, fallbackTitle?: string): Promise<Deck> {
+    return this.create(await pptxToDeck(bytes, fallbackTitle), source);
   },
 
   /**

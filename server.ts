@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod/v4";
 import { deckToHtml, deckSummary, fileSlug } from "./src/html.ts";
 import { PPTX_MIME, deckToPptx } from "./src/pptx.ts";
+import { isPptx } from "./src/pptx-import.ts";
 import { deckStore } from "./src/store.ts";
 import type { Deck } from "./src/types.ts";
 
@@ -35,7 +36,7 @@ const deckSchema = z.object({
 });
 
 /**
- * Langdock file input. When a user attaches an .html file in chat and the
+ * Langdock file input. When a user attaches an .html or .pptx file in chat and the
  * model references it, Langdock resolves it into this object before the call
  * reaches us (docs: "File Input in MCP Tools").
  */
@@ -46,7 +47,7 @@ const fileSchema = z
     base64: z.string(),
     size: z.number().optional(),
   })
-  .describe("The .html slide or deck the user attached in chat. Always use this for attachments (reference the attached file here).")
+  .describe("The slide deck the user attached in chat, .html or .pptx. Always use this for attachments (reference the attached file here).")
   .meta({ format: "file" });
 
 type FileInput = z.infer<typeof fileSchema>;
@@ -59,12 +60,21 @@ function looksLikeHtml(text: string): boolean {
   return /<\s*(!doctype|html|body|section|div|h1|p)\b/i.test(text);
 }
 
-function decodeHtmlFile(file: FileInput): string {
-  const html = Buffer.from(file.base64, "base64").toString("utf8");
-  if (!looksLikeHtml(html)) {
-    throw new Error(`${file.fileName} does not look like HTML (${file.mimeType}). Attach an .html slide or deck.`);
+type Source = { kind: "html"; html: string; fallbackTitle?: string } | { kind: "pptx"; bytes: Uint8Array; fallbackTitle?: string };
+
+/** Attached file → HTML text or PPTX bytes. The user never has to say which. */
+function decodeFile(file: FileInput): Source {
+  const bytes = new Uint8Array(Buffer.from(file.base64, "base64"));
+  const fallbackTitle = titleFromFile(file);
+  if (isPptx(bytes, file.fileName, file.mimeType)) return { kind: "pptx", bytes, fallbackTitle };
+  if (/\.pptx?$/i.test(file.fileName) || /powerpoint|presentation/i.test(file.mimeType)) {
+    throw new Error(`${file.fileName} is not a .pptx PowerPoint file (legacy .ppt is not supported; save it as .pptx).`);
   }
-  return html;
+  const html = Buffer.from(bytes).toString("utf8");
+  if (!looksLikeHtml(html)) {
+    throw new Error(`${file.fileName} does not look like HTML or PowerPoint (${file.mimeType}). Attach an .html or .pptx deck.`);
+  }
+  return { kind: "html", html, fallbackTitle };
 }
 
 function titleFromFile(file: FileInput): string {
@@ -108,13 +118,15 @@ function looksLikeFileReference(value: string): boolean {
   if (trimmed.includes("<")) return false;
   return (
     trimmed.length < 400 &&
-    (/^(\/mnt\/data\/|attachment\/\/|file:\/\/|https?:\/\/)/i.test(trimmed) || /\.html?$/i.test(trimmed))
+    (/^(\/mnt\/data\/|attachment\/\/|file:\/\/|https?:\/\/)/i.test(trimmed) || /\.(html?|pptx?)$/i.test(trimmed))
   );
 }
 
-async function resolveHtml(input: { file?: FileInput; html?: string }): Promise<{ html: string; fallbackTitle?: string } | null> {
+async function resolveSource(input: { file?: FileInput; html?: string }): Promise<Source | null> {
   if (input.file) {
-    return { html: await unwrapIframeShell(decodeHtmlFile(input.file)), fallbackTitle: titleFromFile(input.file) };
+    const source = decodeFile(input.file);
+    if (source.kind === "pptx") return source;
+    return { ...source, html: await unwrapIframeShell(source.html) };
   }
   const inline = input.html?.trim();
   if (!inline) return null;
@@ -126,7 +138,7 @@ async function resolveHtml(input: { file?: FileInput; html?: string }): Promise<
   if (!looksLikeHtml(inline)) {
     throw new Error("`html` does not contain HTML markup. Pass raw HTML, or an attached file in `file`.");
   }
-  return { html: await unwrapIframeShell(inline) };
+  return { kind: "html", html: await unwrapIframeShell(inline) };
 }
 
 function deckResult(deck: Deck, extra?: string) {
@@ -169,8 +181,8 @@ export function createServer(baseUrl = ""): McpServer {
     { name: "langdock-slide-canvas", version: "0.2.0" },
     {
       instructions: [
-        "Slide canvas: a Figma-like editor for 16:9 HTML slides that the user edits directly, without prompting you for each change.",
-        "Use open_slide_canvas whenever the user wants to see, edit, or start slides. If they attached an .html file, pass it in the `file` parameter directly; never read the file or paste its path into `html`.",
+        "Slide canvas: a Figma-like editor for 16:9 slides that the user edits directly, without prompting you for each change. It opens HTML decks and PowerPoint (.pptx) files alike, and exports either format.",
+        "Use open_slide_canvas whenever the user wants to see, edit, or start slides. If they attached an .html or .pptx file, pass it in the `file` parameter directly; never read the file or paste its path into `html`.",
         "The canvas persists its own edits. Only call export_slides_html (HTML) or export_slides_pptx (PowerPoint) when the user asks for the file or a download; both need the deckId from open_slide_canvas.",
         "Do not call save_deck; the canvas UI does that.",
       ].join(" "),
@@ -184,7 +196,7 @@ export function createServer(baseUrl = ""): McpServer {
       title: "Open slide canvas",
       description: [
         "Open the interactive 16:9 slide canvas for the user. This is the only tool needed to start or continue editing; do not read or inspect the file first.",
-        "If the user attached an .html file, pass it in `file` (the canvas opens with it loaded and every text/image/frame editable).",
+        "If the user attached an .html or .pptx file, pass it in `file` (the canvas opens with it loaded and every text/image/frame editable; the format does not matter).",
         "Use `html` only for markup you wrote yourself. Pass `deckId` to reopen a deck from earlier in the conversation. With no input, opens a blank deck.",
       ].join(" "),
       inputSchema: {
@@ -207,9 +219,12 @@ export function createServer(baseUrl = ""): McpServer {
           if (!existing) return unknownDeck(input.deckId);
           return deckResult(existing, "Reopened the canvas.");
         }
-        const source = await resolveHtml(input);
+        const source = await resolveSource(input);
         if (source) {
-          const deck = deckStore.createFromHtml(source.html, "agent");
+          const deck =
+            source.kind === "pptx"
+              ? await deckStore.createFromPptx(source.bytes, "agent", source.fallbackTitle)
+              : deckStore.createFromHtml(source.html, "agent");
           const title = input.title ?? (deck.title === "Imported deck" ? source.fallbackTitle : undefined);
           if (title) deckStore.save({ ...deck, title }, "agent");
           return deckResult(
