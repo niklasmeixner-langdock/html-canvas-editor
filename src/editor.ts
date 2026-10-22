@@ -1,5 +1,5 @@
 import { cssColorToHex } from "./color.ts";
-import { ensureFontStyles, flattenHtmlDocument, needsFlatten } from "./flatten.ts";
+import { ensureFontStyles, flattenHtmlDocument, needsFlatten, prepareDeckFonts } from "./flatten.ts";
 import { ANIMATION_KEYFRAMES, animationValue, deckToHtml } from "./html.ts";
 import type { LayerAnimation } from "./types.ts";
 import type { Deck, Slide, SlideComponent } from "./types.ts";
@@ -108,8 +108,9 @@ export class SlideEditor {
 
   constructor(private readonly root: HTMLElement, deck: Deck) {
     this.deck = snapshot(deck);
+    prepareDeckFonts(this.deck);
     ensureFontStyles(this.deck.fontCss);
-    this.committed = snapshot(deck);
+    this.committed = snapshot(this.deck);
     this.bind();
     this.fit();
     this.render();
@@ -119,8 +120,9 @@ export class SlideEditor {
   setDeck(deck: Deck, status = "Loaded") {
     this.finishTextEdit();
     this.deck = snapshot(deck);
+    prepareDeckFonts(this.deck);
     ensureFontStyles(this.deck.fontCss);
-    this.committed = snapshot(deck);
+    this.committed = snapshot(this.deck);
     this.slideIndex = 0;
     this.selectedId = null;
     this.history = [];
