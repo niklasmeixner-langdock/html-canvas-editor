@@ -909,6 +909,87 @@ async function flattenViaShadow(html: string): Promise<Deck> {
 }
 
 /**
+ * Generics and stacks we never isolate. Custom webfonts (Bureau, …) get a
+ * per-weight family name so a glyph missing from Medium cannot be borrowed
+ * from Bold of the same family — that is what made "SIM cards" look bold
+ * while neighbouring words stayed regular in subsetted deck fonts.
+ */
+const GENERIC_FONT =
+  /^(serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-sans-serif|ui-serif|ui-monospace|ui-rounded|emoji|math|fangsong|inherit|initial|unset|Arial|Helvetica|Times|Georgia|Inter)$/i;
+
+function unquoteFamily(value: string): string {
+  return value.trim().replace(/^["']|["']$/g, "");
+}
+
+function isIsolatedFamily(family: string): boolean {
+  return /-\d{3}$/.test(family);
+}
+
+/** `Bureau` + 500 → `Bureau-500` (idempotent). */
+export function isolatedFamilyName(family: string, weight: number): string {
+  const name = unquoteFamily(family);
+  if (!name || GENERIC_FONT.test(name) || isIsolatedFamily(name)) return name;
+  const w = Number.isFinite(weight) ? Math.round(weight) : 400;
+  return `${name}-${w}`;
+}
+
+/**
+ * Rewrite each `@font-face` to its own family (`Name-400`, `Name-500`, …).
+ * Idempotent: faces already renamed are left alone.
+ */
+export function isolateFontFacesByWeight(fontCss: string): string {
+  if (!fontCss) return fontCss;
+  return fontCss.replace(/@font-face\s*\{([\s\S]*?)\}/g, (full, body: string) => {
+    const familyMatch = body.match(/font-family\s*:\s*([^;]+)/i);
+    if (!familyMatch) return full;
+    const family = unquoteFamily(familyMatch[1] ?? "");
+    if (!family || GENERIC_FONT.test(family) || isIsolatedFamily(family)) return full;
+    const weightMatch = body.match(/font-weight\s*:\s*(\d+)/i);
+    const weight = Number(weightMatch?.[1] ?? 400);
+    const isolated = isolatedFamilyName(family, weight);
+    if (isolated === family) return full;
+    const next = body.replace(
+      /font-family\s*:\s*[^;]+/i,
+      `font-family:${JSON.stringify(isolated)}`,
+    );
+    return `@font-face{${next}}`;
+  });
+}
+
+/**
+ * Point a text layer's stack at the weight-specific face produced by
+ * `isolateFontFacesByWeight`, keeping the rest of the fallback stack.
+ */
+export function fontFamilyForWeight(
+  fontFamily: string | undefined,
+  weight: number | undefined,
+): string | undefined {
+  if (!fontFamily) return fontFamily;
+  const parts = fontFamily.split(",").map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) return fontFamily;
+  const primary = unquoteFamily(parts[0] ?? "");
+  if (!primary || GENERIC_FONT.test(primary) || isIsolatedFamily(primary)) return fontFamily;
+  const isolated = isolatedFamilyName(primary, weight ?? 400);
+  const quoted = JSON.stringify(isolated);
+  const rest = parts.slice(1);
+  return rest.length ? `${quoted}, ${rest.join(", ")}` : `${quoted}, system-ui, sans-serif`;
+}
+
+/**
+ * Stop subsetted multi-weight families from borrowing glyphs across weights.
+ * Safe to call more than once.
+ */
+export function prepareDeckFonts(deck: Deck): void {
+  if (deck.fontCss) deck.fontCss = isolateFontFacesByWeight(deck.fontCss);
+  for (const slide of deck.slides) {
+    for (const component of slide.components) {
+      if (component.type !== "text") continue;
+      component.fontFamily = fontFamilyForWeight(component.fontFamily, component.fontWeight);
+    }
+  }
+}
+
+/**
  * Make a deck's font CSS available in this document (idempotent). The editor
  * calls this for whatever deck it shows; the import calls it so measuring
  * and rendering use the same fonts.
@@ -928,6 +1009,7 @@ export function ensureFontStyles(fontCss: string | undefined) {
 export async function flattenHtmlDocument(html: string): Promise<Deck> {
   const viaIframe = await flattenViaIframe(html).catch(() => null);
   const deck = viaIframe ?? (await flattenViaShadow(html));
+  prepareDeckFonts(deck);
   ensureFontStyles(deck.fontCss);
   if (!deck.slides.length) deck.slides = [emptySlide("Slide 1")];
   return deck;
