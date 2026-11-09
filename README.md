@@ -78,9 +78,16 @@ and by geometry — a slide is big and roughly 16:9), every slide gets the
 shows, per-word reveal `<span>`s collapse back into one heading, and type is
 scaled with the geometry when the stage is narrower than 1920px.
 
+A run of inline text that wraps (an accent `<span>` breaking onto the next
+line) becomes one layer per rendered line, placed where that line sits;
+its bounding box covers both lines, so a single layer would re-wrap on top
+of its neighbours.
+
 The canvas is static, so a slide is imported in its **final state**: CSS
 animations jump to their last keyframe, known build-step markup (`.fragment`,
-`[data-step]`, AOS, …) gets its "shown" classes, and anything still laid out
+`.frag`, `[data-step]`, AOS, …) gets its "shown" classes (`.on` included), any
+transition the deck forces with its own `!important` is finished before
+measuring, and anything still laid out
 but invisible is treated as an unfired step and revealed in place (entrance
 offsets undone, layout transforms such as `translate(-50%, -50%)` kept).
 `display: none` stays hidden.
