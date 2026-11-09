@@ -1,6 +1,6 @@
 import { cssColorToHex } from "./color.ts";
 import { ensureFontStyles, flattenHtmlDocument, needsFlatten, prepareDeckFonts } from "./flatten.ts";
-import { ANIMATION_KEYFRAMES, animationValue, deckToHtml } from "./html.ts";
+import { ANIMATION_KEYFRAMES, STEP_GAP_MS, animationValue, deckToHtml } from "./html.ts";
 import type { LayerAnimation } from "./types.ts";
 import type { Deck, Slide, SlideComponent } from "./types.ts";
 import {
@@ -74,6 +74,7 @@ export class SlideEditor {
   /** Manual double-click tracking: re-rendering the slide between clicks
    *  swaps DOM nodes, so the browser's own dblclick never fires. */
   private lastClick: { id: string; at: number } | null = null;
+  private playTimer: number | null = null;
   private thumbCache = new WeakMap<Slide, { background: string; components: SlideComponent[]; node: HTMLElement }>();
   private drag:
     | {
@@ -855,6 +856,7 @@ export class SlideEditor {
     this.renderLayers();
     this.renderProps();
     this.renderThumbs();
+    this.renderPlay();
     this.renderStatus();
   }
 
@@ -870,6 +872,8 @@ export class SlideEditor {
   }
 
   private renderSlide() {
+    // Rebuilt nodes drop the running animations; end the playback with them.
+    this.stopAnimations();
     const slide = this.current();
     const node = this.el("slide");
     node.style.background = slide.background;
@@ -1193,6 +1197,10 @@ export class SlideEditor {
    * same keyframes, same timing. Purely visual; nothing is committed.
    */
   playAnimations() {
+    if (this.playTimer != null) {
+      this.stopAnimations();
+      return;
+    }
     this.finishTextEdit();
     if (!document.getElementById("ld-anim-keyframes")) {
       const style = document.createElement("style");
@@ -1201,20 +1209,47 @@ export class SlideEditor {
       document.head.append(style);
     }
     const nodes = this.root.querySelectorAll<HTMLElement>("#slide .el");
-    let any = false;
+    let endsAt = 0;
     for (const node of nodes) {
       const component = this.current().components.find((c) => c.id === node.dataset.id);
       const value = component ? animationValue(component) : "";
       node.style.animation = "";
-      if (!value) continue;
-      any = true;
+      if (!value || !component?.animation) continue;
+      const { delay, duration, step } = component.animation;
+      endsAt = Math.max(endsAt, delay + duration + (step ? step * STEP_GAP_MS : 0));
       // Restart: a reflow between clearing and setting re-triggers it.
       void node.offsetWidth;
       node.style.animation = value;
-      node.addEventListener("animationend", () => (node.style.animation = ""), { once: true });
     }
-    this.status = any ? "Playing entrance" : "No animations on this slide";
+    if (endsAt) {
+      this.el("viewport").classList.add("playing");
+      this.playTimer = window.setTimeout(() => this.stopAnimations(), endsAt + 100);
+    }
+    this.status = endsAt ? "Playing animations" : "No animations on this slide";
     this.renderStatus();
+    this.renderPlay();
+  }
+
+  private stopAnimations() {
+    if (this.playTimer == null) return;
+    window.clearTimeout(this.playTimer);
+    this.playTimer = null;
+    this.el("viewport").classList.remove("playing");
+    this.root.querySelectorAll<HTMLElement>("#slide .el").forEach((node) => (node.style.animation = ""));
+    if (this.status === "Playing animations") this.status = "Ready";
+    this.renderStatus();
+    this.renderPlay();
+  }
+
+  private renderPlay() {
+    const button = this.el<HTMLButtonElement>("play-btn");
+    const playing = this.playTimer != null;
+    const animated = this.current().components.some((component) => component.animation);
+    button.disabled = !animated;
+    button.dataset.playing = String(playing);
+    button.title = !animated ? "No animations on this slide" : playing ? "Stop" : "Play this slide's animations";
+    button.setAttribute("aria-label", playing ? "Stop animations" : "Play animations");
+    button.querySelector("span")!.textContent = playing ? "Stop" : "Play";
   }
 
   private syncPropValues(selected: SlideComponent) {

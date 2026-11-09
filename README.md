@@ -96,8 +96,10 @@ build steps. A card that fades in fades its text with it (nearest animated
 ancestor wins).
 
 - **Editor**: animated layers carry a `▶` badge (`▶2` = build step 2); the
-  props panel shows the animation read-only with *Remove animation*; **Play**
-  replays the current slide's entrance.
+  props panel shows the animation read-only with *Remove animation*; the
+  **Play** button on the canvas (bottom right, on every surface) replays the
+  current slide's animations and turns into **Stop** while they run. It is
+  greyed out on slides with nothing animated.
 - **Export**: keyframes plus one rule per animated layer, run when the slide
   becomes active; build steps are revealed click by click (Play in the editor
   sequences them 450 ms apart instead); all off for print and
@@ -179,7 +181,7 @@ slide at a time, scaled to the window (letterboxed 16:9), no dependencies.
 The app reads the host's MCP Apps display mode and lays itself out per surface
 (`data-mode` on `#app`, see `mcp-app.ts`):
 
-- **inline** (chat card): slides only — canvas, filmstrip, Download. Plain
+- **inline** (chat card): slides only — canvas, filmstrip, Play, Download. Plain
   scroll is left to the chat (a stray wheel used to pan the slide out of view);
   ⌘/Ctrl+scroll still zooms. The app reports a 600px height, the host's cap.
 - **pip** (side panel): panels start minimised (icon tools, no properties).

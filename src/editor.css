@@ -661,6 +661,63 @@ button.btn.download .dl {
   pointer-events: none;
 }
 
+#viewport.playing #overlay {
+  display: none;
+}
+
+/* Canvas play button: on every surface, greyed out when nothing animates. */
+.play-btn {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+.play-btn:not(:disabled):not([data-playing="true"]):hover {
+  background: var(--panel-2);
+  border-color: var(--line-hover);
+}
+.play-btn svg {
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+.play-btn[data-playing="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.play-btn[data-playing="true"] svg {
+  color: var(--on-accent);
+}
+.play-btn .icon-stop,
+.play-btn[data-playing="true"] .icon-play {
+  display: none;
+}
+.play-btn[data-playing="true"] .icon-stop {
+  display: block;
+}
+.play-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.play-btn:disabled svg {
+  color: var(--muted);
+}
+
 .sel {
   position: absolute;
   border: 1.5px solid var(--handle);
