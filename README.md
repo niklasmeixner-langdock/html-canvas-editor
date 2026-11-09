@@ -222,6 +222,14 @@ pnpm dev
 
 If you set `MCP_AUTH_TOKEN`, send `Authorization: Bearer <token>`.
 
-## Railway
+## Azure
 
-Normal Node service (`npm run build` then `npm start`, binds `PORT`). After deploy, generate a public domain and use `https://<service>.up.railway.app/mcp`.
+Runs as the Container App `html-canvas-editor` in `rg-se-mcp-hosting` (environment `cae-se-mcp-hosting`), image from `crsemcphosting.azurecr.io`. To deploy a new version:
+
+```bash
+tag=$(git rev-parse --short HEAD)
+az acr build -r crsemcphosting -t html-canvas-editor:$tag --platform linux/amd64 .
+az containerapp update -n html-canvas-editor -g rg-se-mcp-hosting --image crsemcphosting.azurecr.io/html-canvas-editor:$tag
+```
+
+`PUBLIC_URL` is set to the app's `azurecontainerapps.io` address. There is no volume, so decks live only as long as the replica; a new revision starts empty.
