@@ -74,6 +74,7 @@ export class SlideEditor {
   /** Manual double-click tracking: re-rendering the slide between clicks
    *  swaps DOM nodes, so the browser's own dblclick never fires. */
   private lastClick: { id: string; at: number } | null = null;
+  private thumbCache = new WeakMap<Slide, { background: string; components: SlideComponent[]; node: HTMLElement }>();
   private drag:
     | {
         kind: "move" | "resize" | "pan" | "marquee";
@@ -987,6 +988,33 @@ export class SlideEditor {
     }
   }
 
+  /** Scaled-down copy of a slide's layers. Reused while the slide's layer
+   *  refs are unchanged; the current slide is always rebuilt because inline
+   *  text edits mutate its layers in place. */
+  private thumbSlide(slide: Slide, isCurrent: boolean): HTMLElement {
+    const cached = this.thumbCache.get(slide);
+    if (
+      cached &&
+      !isCurrent &&
+      cached.background === slide.background &&
+      cached.components.length === slide.components.length &&
+      cached.components.every((component, i) => component === slide.components[i])
+    ) {
+      return cached.node;
+    }
+    const node = document.createElement("div");
+    node.className = "thumb-slide";
+    node.style.background = slide.background;
+    for (const component of slide.components) {
+      const el = this.componentNode(component);
+      // Editor lookups go by `.el[data-id]`; the copy must never match.
+      delete el.dataset.id;
+      node.append(el);
+    }
+    this.thumbCache.set(slide, { background: slide.background, components: [...slide.components], node });
+    return node;
+  }
+
   private renderThumbs() {
     const thumbs = this.el("thumbs");
     thumbs.replaceChildren();
@@ -996,6 +1024,7 @@ export class SlideEditor {
       button.className = "thumb";
       button.dataset.active = String(index === this.slideIndex);
       button.style.background = slide.background;
+      button.append(this.thumbSlide(slide, index === this.slideIndex));
       const label = document.createElement("span");
       label.textContent = `${index + 1}. ${slide.name}`;
       button.append(label);

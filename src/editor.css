@@ -551,6 +551,7 @@ button.btn.download .dl {
   display: none;
 }
 #app[data-mode="inline"] .thumb {
+  --thumb-scale: calc(78 / 1920);
   width: 80px;
   height: 45px;
 }
@@ -812,7 +813,10 @@ button.btn.download .dl {
 }
 
 .thumb {
+  /* Inner width (minus the 1px borders) over the slide width. */
+  --thumb-scale: calc(110 / 1920);
   flex: 0 0 auto;
+  box-sizing: border-box;
   width: 112px;
   height: 63px;
   padding: 0;
@@ -831,6 +835,18 @@ button.btn.download .dl {
 .thumb[data-active="true"] {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.thumb-slide {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  transform: scale(var(--thumb-scale));
+  transform-origin: 0 0;
+  pointer-events: none;
 }
 
 .thumb span {
