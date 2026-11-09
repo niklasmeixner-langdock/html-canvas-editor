@@ -92,7 +92,7 @@ but invisible is treated as an unfired step and revealed in place (entrance
 offsets undone, layout transforms such as `translate(-50%, -50%)` kept).
 `display: none` stays hidden.
 
-### Animations are preserved, not edited
+### Animations: preserved, lightly editable
 
 Before anything is frozen, every element's start state is recorded (opacity,
 transform, declared animation/transition timing). The difference to the final
@@ -102,8 +102,18 @@ state gives each layer a small declarative `animation`:
 build steps. A card that fades in fades its text with it (nearest animated
 ancestor wins).
 
-- **Editor**: animated layers carry a `▶` badge (`▶2` = build step 2); the
-  props panel shows the animation read-only with *Remove animation*;
+- **Editor**: animated layers carry a `▶` badge (`▶2` = build step 2).
+  The agent builds the animations; the editor only fixes the last mile:
+  - one layer: *Effect* (None or one of the six effects), *Start* (with the
+    slide or on click) and its *Click* number;
+  - several layers: *Appear one by one* gives them click steps in reading
+    order (top to bottom, then left to right); a layer inside another
+    selected one (a card's text) appears with it. *Remove animations* clears
+    the selection;
+  - no selection: *Remove all animations* clears the slide (undo brings
+    them back), for imports that recorded motion nobody meant.
+
+  Timing (delay, duration) and easing are deliberately not exposed.
   **▶ Play** in the top bar (on every surface, chat card included) replays the
   current slide's animations and turns into **Stop** while they run. It is
   greyed out on slides with nothing animated.

@@ -423,11 +423,9 @@ button.btn.ghost:hover {
   margin-top: 16px !important;
 }
 
-.anim-summary {
-  margin: 0 0 4px;
-  padding: 0 6px;
-  font-size: 13px;
-  text-transform: capitalize;
+.props .btn.wide {
+  width: 100%;
+  margin-bottom: 6px;
 }
 
 .props .hint {

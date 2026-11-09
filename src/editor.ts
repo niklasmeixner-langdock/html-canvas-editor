@@ -1,9 +1,10 @@
 import { cssColorToHex } from "./color.ts";
 import { ensureFontStyles, flattenHtmlDocument, needsFlatten, prepareDeckFonts } from "./flatten.ts";
 import { ANIMATION_KEYFRAMES, STEP_GAP_MS, animationValue, deckToHtml } from "./html.ts";
-import type { LayerAnimation } from "./types.ts";
+import type { AnimationEffect, LayerAnimation } from "./types.ts";
 import type { Deck, Slide, SlideComponent } from "./types.ts";
 import {
+  ANIMATION_EFFECTS,
   SLIDE_HEIGHT,
   SLIDE_WIDTH,
   clampComponent,
@@ -1051,12 +1052,20 @@ export class SlideEditor {
       return;
     }
     if (!selected) {
+      const animated = this.current().components.filter((component) => component.animation).length;
       props.innerHTML = `
         <h2>Slide</h2>
         <div class="field"><label>Name</label><input id="slide-name" value="${escape(this.current().name)}" /></div>
         <div class="field"><label>Background</label><input id="slide-bg" type="color" value="${cssColorToHex(this.current().background)}" /></div>
         <div class="field"><label>Deck title</label><input id="deck-name" value="${escape(this.deck.title)}" /></div>
-        <p class="empty-props">Click a layer to edit. Double-click or press Enter to change text. Attach an .html or .pptx deck in chat to edit it here.</p>
+        ${
+          animated
+            ? `<h2 class="props-sub">Animation</h2>
+        <p class="hint">${animated} animated ${animated === 1 ? "layer" : "layers"} on this slide.</p>
+        <button class="btn wide" id="slide-anim-clear" type="button">Remove all animations</button>`
+            : ""
+        }
+        <p class="empty-props">Select several layers and choose Appear one by one to build them on click. Click a layer to edit. Double-click or press Enter to change text. Attach an .html or .pptx deck in chat to edit it here.</p>
       `;
       this.bindField("slide-name", (value) => {
         this.current().name = value;
@@ -1070,6 +1079,9 @@ export class SlideEditor {
         this.deck.title = value;
         this.commit("Renamed deck");
       });
+      props.querySelector("#slide-anim-clear")?.addEventListener("click", () =>
+        this.clearAnimations(null, "Animations removed"),
+      );
       return;
     }
 
@@ -1086,8 +1098,16 @@ export class SlideEditor {
           <button class="btn" id="group-dup" type="button">Duplicate</button>
           <button class="btn" id="group-del" type="button">Delete</button>
         </div>
+        <h2 class="props-sub">Animation</h2>
+        <button class="btn wide" id="group-steps" type="button">Appear one by one</button>
+        ${group.some((c) => c.animation) ? `<button class="btn wide" id="group-anim-clear" type="button">Remove animations</button>` : ""}
+        <p class="hint">One click each, top to bottom and left to right. Text inside a selected card appears with it.</p>
         <p class="empty-props">Drag to move them together, arrow keys to nudge. Shift-click adds or removes a layer; click empty slide space to start over.</p>
       `;
+      props.querySelector("#group-steps")?.addEventListener("click", () => this.appearOneByOne());
+      props.querySelector("#group-anim-clear")?.addEventListener("click", () =>
+        this.clearAnimations(this.selectedIds, "Animations removed"),
+      );
       this.bindField("group-x", (value) => {
         const dx = Number(value) - bounds.x;
         this.mutateAll((c) => ({ x: c.x + dx }), "Moved");
@@ -1146,13 +1166,27 @@ export class SlideEditor {
         ${numField("Radius", "prop-radius", selected.borderRadius ?? 0)}`
           : ""
       }
+      <h2 class="props-sub">Animation</h2>
+      <div class="field"><label>Effect</label>
+        <select id="anim-effect">
+          <option value="" ${selected.animation ? "" : "selected"}>None</option>
+          ${ANIMATION_EFFECTS.map(
+            (effect) =>
+              `<option value="${effect}" ${selected.animation?.effect === effect ? "selected" : ""}>${EFFECT_LABELS[effect]}</option>`,
+          ).join("")}
+        </select>
+      </div>
       ${
         selected.animation
           ? `
-        <h2 class="props-sub">Animation</h2>
-        <p class="anim-summary">${escape(describeAnimation(selected.animation))}</p>
-        <p class="hint">Preserved from the imported deck and kept in the export. Press Play to preview.</p>
-        <button class="btn" id="prop-anim-remove" type="button">Remove animation</button>`
+        <div class="field"><label>Start</label>
+          <select id="anim-start">
+            <option value="slide" ${selected.animation.step ? "" : "selected"}>With the slide</option>
+            <option value="click" ${selected.animation.step ? "selected" : ""}>On click</option>
+          </select>
+        </div>
+        ${selected.animation.step ? numField("Click", "anim-step", selected.animation.step) : ""}
+        <p class="hint">Kept in the HTML and PPTX export. Press Play to preview.</p>`
           : ""
       }
     `;
@@ -1187,9 +1221,68 @@ export class SlideEditor {
       this.pendingImageId = selected.id;
       this.el<HTMLInputElement>("file").click();
     });
-    props.querySelector("#prop-anim-remove")?.addEventListener("click", () => {
-      this.mutateSelected({ animation: undefined }, "Animation removed");
+    this.bindField("anim-effect", (value) => {
+      const current = selected.animation;
+      this.mutateSelected(
+        { animation: value ? { ...(current ?? DEFAULT_ANIMATION), effect: value as AnimationEffect } : undefined },
+        value ? "Animation set" : "Animation removed",
+      );
     });
+    this.bindField("anim-start", (value) => {
+      if (!selected.animation) return;
+      const step = value === "click" ? this.nextStep([selected.id]) : undefined;
+      this.mutateSelected({ animation: { ...selected.animation, step } }, step ? `Click ${step}` : "With the slide");
+    });
+    this.bindField("anim-step", (value) => {
+      if (!selected.animation) return;
+      const step = Math.max(1, Math.round(Number(value) || 1));
+      this.mutateSelected({ animation: { ...selected.animation, step } }, `Click ${step}`);
+    });
+  }
+
+  /** First click step after every layer on this slide outside `except`. */
+  private nextStep(except: string[]): number {
+    const steps = this.current()
+      .components.filter((component) => !except.includes(component.id))
+      .map((component) => component.animation?.step ?? 0);
+    return Math.max(0, ...steps) + 1;
+  }
+
+  /**
+   * One click step per selected layer, in reading order. A layer that sits
+   * inside another selected one (a card's text) appears with that card.
+   */
+  private appearOneByOne() {
+    const group = this.selectedAll();
+    const inside = (inner: SlideComponent, outer: SlideComponent) =>
+      inner !== outer &&
+      inner.x >= outer.x - 1 &&
+      inner.y >= outer.y - 1 &&
+      inner.x + inner.width <= outer.x + outer.width + 1 &&
+      inner.y + inner.height <= outer.y + outer.height + 1;
+    const outers = group.filter((item) => !group.some((other) => inside(item, other)));
+    const first = this.nextStep(group.map((item) => item.id));
+    const stepOf = new Map<string, number>();
+    readingOrder(outers).forEach((item, i) => stepOf.set(item.id, first + i));
+    for (const item of group) {
+      if (stepOf.has(item.id)) continue;
+      const outer = outers.find((candidate) => inside(item, candidate));
+      if (outer) stepOf.set(item.id, stepOf.get(outer.id)!);
+    }
+    this.mutateAll(
+      (component) => ({
+        animation: { ...(component.animation ?? DEFAULT_ANIMATION), step: stepOf.get(component.id) },
+      }),
+      `${outers.length} click steps`,
+    );
+  }
+
+  private clearAnimations(ids: string[] | null, label: string) {
+    const slide = this.current();
+    slide.components = slide.components.map((component) =>
+      component.animation && (!ids || ids.includes(component.id)) ? { ...component, animation: undefined } : component,
+    );
+    this.commit(label);
   }
 
   /**
@@ -1274,6 +1367,29 @@ export class SlideEditor {
     const field = this.root.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`#${id}`);
     field?.addEventListener(eventName, () => apply(field.value));
   }
+}
+
+const EFFECT_LABELS: Record<AnimationEffect, string> = {
+  fade: "Fade",
+  "fade-up": "Fade up",
+  "fade-down": "Fade down",
+  "fade-left": "Fade left",
+  "fade-right": "Fade right",
+  scale: "Scale",
+};
+
+/** What a layer gets when the user turns an animation on. */
+const DEFAULT_ANIMATION: LayerAnimation = { effect: "fade-up", delay: 0, duration: 500 };
+
+/** Top to bottom, then left to right within a row (tops within 40px). */
+function readingOrder(items: SlideComponent[]): SlideComponent[] {
+  const rows: SlideComponent[][] = [];
+  for (const item of [...items].sort((a, b) => a.y - b.y)) {
+    const row = rows[rows.length - 1];
+    if (row && item.y - row[0]!.y < 40) row.push(item);
+    else rows.push([item]);
+  }
+  return rows.flatMap((row) => row.sort((a, b) => a.x - b.x));
 }
 
 function describeAnimation(anim: LayerAnimation): string {
