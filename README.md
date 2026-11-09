@@ -103,8 +103,8 @@ build steps. A card that fades in fades its text with it (nearest animated
 ancestor wins).
 
 - **Editor**: animated layers carry a `▶` badge (`▶2` = build step 2); the
-  props panel shows the animation read-only with *Remove animation*; the
-  **Play** button on the canvas (bottom right, on every surface) replays the
+  props panel shows the animation read-only with *Remove animation*;
+  **▶ Play** in the top bar (on every surface, chat card included) replays the
   current slide's animations and turns into **Stop** while they run. It is
   greyed out on slides with nothing animated.
 - **Export**: keyframes plus one rule per animated layer, run when the slide
