@@ -76,6 +76,35 @@ function ownTextRect(el: Element, ownOnly: boolean): DOMRect | null {
   return union;
 }
 
+/**
+ * An inline run's text, one piece per rendered line, each with the box of its
+ * words. A wrapped `<span>`'s own box covers every line it touches, so one
+ * layer made from it re-wraps inside the wrong box and lands on its neighbours.
+ */
+function inlineLines(el: Element): { text: string; rect: DOMRect }[] {
+  const lines: { text: string; rect: DOMRect }[] = [];
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    for (const word of (node.textContent ?? "").matchAll(/\S+/g)) {
+      const range = document.createRange();
+      range.setStart(node, word.index);
+      range.setEnd(node, word.index + word[0].length);
+      const rect = range.getBoundingClientRect();
+      if (rect.width < 0.5 || rect.height < 0.5) continue;
+      const line = lines[lines.length - 1];
+      if (line && Math.abs(rect.top - line.rect.top) < rect.height / 2) {
+        line.text += ` ${word[0]}`;
+        const left = Math.min(line.rect.left, rect.left);
+        const top = Math.min(line.rect.top, rect.top);
+        line.rect = new DOMRect(left, top, Math.max(line.rect.right, rect.right) - left, Math.max(line.rect.bottom, rect.bottom) - top);
+      } else {
+        lines.push({ text: word[0], rect: DOMRect.fromRect(rect) });
+      }
+    }
+  }
+  return lines;
+}
+
 function layerName(text: string): string {
   const flat = text.replace(/\s*\n\s*/g, " ");
   return flat.length > 28 ? `${flat.slice(0, 27)}…` : flat;
@@ -268,12 +297,16 @@ function flattenSlideEl(root: Element, index: number): Slide {
     // is one heading: keep it as one layer so wrapping and order survive.
     // Spans styled differently (an accent word) stay their own layer.
     if (children.length && children.every((child) => isPlainInline(child, style))) children = [];
-    let text = children.length === 0 ? textWithBreaks(el, style) : ownText(el);
+    // Bake text-transform in: the editor renders the string as-is, and case
+    // changes the width, so it must be measured and rendered the same way.
+    const withCase = (value: string) =>
+      style.textTransform === "uppercase"
+        ? value.toUpperCase()
+        : style.textTransform === "lowercase"
+          ? value.toLowerCase()
+          : value;
+    const text = withCase(children.length === 0 ? textWithBreaks(el, style) : ownText(el));
     if (text) {
-      // Bake text-transform in: the editor renders the string as-is, and case
-      // changes the width, so it must be measured and rendered the same way.
-      if (style.textTransform === "uppercase") text = text.toUpperCase();
-      else if (style.textTransform === "lowercase") text = text.toLowerCase();
       const letterSpacing = Number.parseFloat(style.letterSpacing) * scale;
       const padding = Math.min(
         Number.parseFloat(style.paddingTop) || 0,
@@ -293,7 +326,8 @@ function flattenSlideEl(root: Element, index: number): Slide {
         textBox.height = lines.height + 2 * padding * scale;
       }
       if (textRect && textRect.width >= rect.width - 1) textBox.width = Math.ceil(textBox.width) + 2;
-      add({
+      const fontSize = Math.max(8, round((Number.parseFloat(style.fontSize) || 24) * scale));
+      const layer: SlideComponent = {
         id: uid("text"),
         type: "text",
         // Layer list shows this; the text itself beats "div"/"span".
@@ -303,7 +337,7 @@ function flattenSlideEl(root: Element, index: number): Slide {
         text,
         // Not rounded to whole pixels: 63.99 → 64 is enough to push a full
         // line over its measured width.
-        fontSize: Math.max(8, round((Number.parseFloat(style.fontSize) || 24) * scale)),
+        fontSize,
         fontWeight: Number.parseInt(style.fontWeight, 10) || 400,
         fontFamily: style.fontFamily,
         color: cssColorValue(style.color),
@@ -312,7 +346,29 @@ function flattenSlideEl(root: Element, index: number): Slide {
         letterSpacing: Number.isFinite(letterSpacing) && letterSpacing !== 0 ? round(letterSpacing) : undefined,
         // Text measured from a padded box (card, pill) keeps its inset.
         padding: padding > 0 ? round(padding * scale) : undefined,
-      });
+      };
+      const wrapped = children.length === 0 && style.display === "inline" && el.getClientRects().length > 1;
+      const lines = wrapped ? inlineLines(el) : [];
+      if (lines.length > 1) {
+        // Left-aligned at each line's own position, with slack so the same
+        // words never wrap again.
+        for (const line of lines) {
+          const lineText = withCase(line.text);
+          const lineBox = mapRect(line.rect, rootRect);
+          add({
+            ...layer,
+            id: uid("text"),
+            name: layerName(lineText),
+            ...lineBox,
+            width: Math.ceil(lineBox.width + fontSize / 2),
+            text: lineText,
+            textAlign: "left",
+            padding: undefined,
+          });
+        }
+      } else {
+        add(layer);
+      }
     }
 
     for (const child of children) visit(child, opacity);
@@ -380,6 +436,7 @@ const PAGE_STATE_CLASSES = ["js", "loaded", "is-loaded", "ready", "is-ready", "f
 /** Build steps inside a slide (reveal.js fragments, AOS, hand-rolled data-step). */
 const FRAGMENT_SELECTOR = [
   ".fragment",
+  ".frag",
   ".step",
   ".build",
   ".reveal",
@@ -401,7 +458,7 @@ const FRAGMENT_SELECTOR = [
   "[data-build]",
   "[data-delay]",
 ].join(", ");
-const FRAGMENT_STATE_CLASSES = [...STATE_CLASSES, "aos-animate", "fragment-visible", "current-fragment", "past"];
+const FRAGMENT_STATE_CLASSES = [...STATE_CLASSES, "on", "aos-animate", "fragment-visible", "current-fragment", "past"];
 
 /**
  * A transform an element parks at before it animates in (offset, shrink).
@@ -432,6 +489,7 @@ function revealBuildSteps(root: Element) {
     el.removeAttribute("hidden");
     if (el.getAttribute("aria-hidden") === "true") el.setAttribute("aria-hidden", "false");
   });
+  finishMotion(root);
   root.querySelectorAll<HTMLElement>("*").forEach((el) => {
     const style = getComputedStyle(el);
     if (style.display === "none") return;
@@ -446,6 +504,22 @@ function revealBuildSteps(root: Element) {
     // with a small translate is placed there on purpose.
     if (isEntranceTransform(style.transform)) inline.setProperty("transform", "none", "important");
   });
+  finishMotion(root);
+}
+
+/**
+ * Jump every running transition and animation to its end. FREEZE_CSS only
+ * wins against plain rules: a deck's own `transition: … !important` that is
+ * more specific still runs, and measuring then catches it at opacity 0.
+ */
+function finishMotion(root: Element) {
+  for (const animation of root.getAnimations({ subtree: true })) {
+    try {
+      animation.finish();
+    } catch {
+      // Infinite animations cannot finish; they are not entrances.
+    }
+  }
 }
 
 /** Slides in "presentation mode" decks are hidden until active; show them all. */
@@ -544,7 +618,7 @@ type StartState = {
 const startStates = new WeakMap<Element, StartState>();
 
 /** Click-revealed build steps (as opposed to on-load entrances). */
-const STEP_SELECTOR = ".fragment, .step, [data-step], [data-fragment], [data-fragment-index], [data-build]";
+const STEP_SELECTOR = ".fragment, .frag, .step, [data-step], [data-fragment], [data-fragment-index], [data-build]";
 
 /** First time in a comma list, in ms ("0.6s, 0.2s" → 600). */
 function msOf(value: string): number {

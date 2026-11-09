@@ -78,14 +78,21 @@ and by geometry — a slide is big and roughly 16:9), every slide gets the
 shows, per-word reveal `<span>`s collapse back into one heading, and type is
 scaled with the geometry when the stage is narrower than 1920px.
 
+A run of inline text that wraps (an accent `<span>` breaking onto the next
+line) becomes one layer per rendered line, placed where that line sits;
+its bounding box covers both lines, so a single layer would re-wrap on top
+of its neighbours.
+
 The canvas is static, so a slide is imported in its **final state**: CSS
 animations jump to their last keyframe, known build-step markup (`.fragment`,
-`[data-step]`, AOS, …) gets its "shown" classes, and anything still laid out
+`.frag`, `[data-step]`, AOS, …) gets its "shown" classes (`.on` included), any
+transition the deck forces with its own `!important` is finished before
+measuring, and anything still laid out
 but invisible is treated as an unfired step and revealed in place (entrance
 offsets undone, layout transforms such as `translate(-50%, -50%)` kept).
 `display: none` stays hidden.
 
-### Animations are preserved, not edited
+### Animations: preserved, lightly editable
 
 Before anything is frozen, every element's start state is recorded (opacity,
 transform, declared animation/transition timing). The difference to the final
@@ -95,9 +102,21 @@ state gives each layer a small declarative `animation`:
 build steps. A card that fades in fades its text with it (nearest animated
 ancestor wins).
 
-- **Editor**: animated layers carry a `▶` badge (`▶2` = build step 2); the
-  props panel shows the animation read-only with *Remove animation*; **Play**
-  replays the current slide's entrance.
+- **Editor**: animated layers carry a `▶` badge (`▶2` = build step 2).
+  The agent builds the animations; the editor only fixes the last mile:
+  - one layer: *Effect* (None or one of the six effects), *Start* (with the
+    slide or on click) and its *Click* number;
+  - several layers: *Appear one by one* gives them click steps in reading
+    order (top to bottom, then left to right); a layer inside another
+    selected one (a card's text) appears with it. *Remove animations* clears
+    the selection;
+  - no selection: *Remove all animations* clears the slide (undo brings
+    them back), for imports that recorded motion nobody meant.
+
+  Timing (delay, duration) and easing are deliberately not exposed.
+  **▶ Play** in the top bar (on every surface, chat card included) replays the
+  current slide's animations and turns into **Stop** while they run. It is
+  greyed out on slides with nothing animated.
 - **Export**: keyframes plus one rule per animated layer, run when the slide
   becomes active; build steps are revealed click by click (Play in the editor
   sequences them 450 ms apart instead); all off for print and
@@ -179,7 +198,7 @@ slide at a time, scaled to the window (letterboxed 16:9), no dependencies.
 The app reads the host's MCP Apps display mode and lays itself out per surface
 (`data-mode` on `#app`, see `mcp-app.ts`):
 
-- **inline** (chat card): slides only — canvas, filmstrip, Download. Plain
+- **inline** (chat card): slides only — canvas, filmstrip, Play, Download. Plain
   scroll is left to the chat (a stray wheel used to pan the slide out of view);
   ⌘/Ctrl+scroll still zooms. The app reports a 600px height, the host's cap.
 - **pip** (side panel): panels start minimised (icon tools, no properties).
@@ -213,6 +232,14 @@ pnpm dev
 
 If you set `MCP_AUTH_TOKEN`, send `Authorization: Bearer <token>`.
 
-## Railway
+## Azure
 
-Normal Node service (`npm run build` then `npm start`, binds `PORT`). After deploy, generate a public domain and use `https://<service>.up.railway.app/mcp`.
+Runs as the Container App `html-canvas-editor` in `rg-se-mcp-hosting` (environment `cae-se-mcp-hosting`), image from `crsemcphosting.azurecr.io`. To deploy a new version:
+
+```bash
+tag=$(git rev-parse --short HEAD)
+az acr build -r crsemcphosting -t html-canvas-editor:$tag --platform linux/amd64 .
+az containerapp update -n html-canvas-editor -g rg-se-mcp-hosting --image crsemcphosting.azurecr.io/html-canvas-editor:$tag
+```
+
+`PUBLIC_URL` is set to the app's `azurecontainerapps.io` address. There is no volume, so decks live only as long as the replica; a new revision starts empty.

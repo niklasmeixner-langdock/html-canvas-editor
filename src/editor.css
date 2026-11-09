@@ -423,11 +423,9 @@ button.btn.ghost:hover {
   margin-top: 16px !important;
 }
 
-.anim-summary {
-  margin: 0 0 4px;
-  padding: 0 6px;
-  font-size: 13px;
-  text-transform: capitalize;
+.props .btn.wide {
+  width: 100%;
+  margin-bottom: 6px;
 }
 
 .props .hint {
@@ -540,17 +538,57 @@ button.btn.download .dl {
   flex-shrink: 0;
 }
 
+/* Play: icon + label, accent while running, dimmed when nothing animates. */
+button.btn.play {
+  gap: 5px;
+  padding-left: 8px;
+}
+button.btn.play svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+button.btn.play .icon-stop,
+button.btn.play[data-playing="true"] .icon-play {
+  display: none;
+}
+button.btn.play[data-playing="true"] .icon-stop {
+  display: block;
+}
+button.btn.play[data-playing="true"],
+button.btn.play[data-playing="true"]:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+button.btn.play[data-playing="true"] svg {
+  color: var(--on-accent);
+}
+button.btn.play:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button.btn.play:disabled:hover {
+  background: var(--panel);
+  border-color: var(--line-strong);
+}
+button.btn.play:disabled svg {
+  color: var(--muted);
+}
+
 /* Inline chat card: slides only. */
 #app[data-mode="inline"] {
   grid-template-rows: 40px minmax(0, 1fr) 68px;
 }
-#app[data-mode="inline"] .topbar-actions .btn:not(#download-btn):not(#pptx-btn) {
+#app[data-mode="inline"] .topbar-actions .btn:not(#play-btn):not(#download-btn):not(#pptx-btn) {
   display: none;
 }
 #app[data-mode="inline"] .brand span {
   display: none;
 }
 #app[data-mode="inline"] .thumb {
+  --thumb-scale: calc(78 / 1920);
   width: 80px;
   height: 45px;
 }
@@ -658,6 +696,10 @@ button.btn.download .dl {
   width: 1920px;
   height: 1080px;
   pointer-events: none;
+}
+
+#viewport.playing #overlay {
+  display: none;
 }
 
 .sel {
@@ -812,7 +854,10 @@ button.btn.download .dl {
 }
 
 .thumb {
+  /* Inner width (minus the 1px borders) over the slide width. */
+  --thumb-scale: calc(110 / 1920);
   flex: 0 0 auto;
+  box-sizing: border-box;
   width: 112px;
   height: 63px;
   padding: 0;
@@ -831,6 +876,18 @@ button.btn.download .dl {
 .thumb[data-active="true"] {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.thumb-slide {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  transform: scale(var(--thumb-scale));
+  transform-origin: 0 0;
+  pointer-events: none;
 }
 
 .thumb span {

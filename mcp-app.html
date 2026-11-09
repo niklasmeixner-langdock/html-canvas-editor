@@ -19,10 +19,14 @@
           <span id="status">Loading…</span>
         </div>
         <div class="topbar-actions">
-          <button class="btn ghost" id="play-btn" type="button" title="Preview this slide's entrance animation">Play</button>
           <button class="btn ghost" id="fit-btn" type="button">Fit</button>
           <button class="btn ghost" id="reset-btn" type="button">Reset</button>
           <span class="sep"></span>
+          <button class="btn play" id="play-btn" type="button" title="Play this slide's animations" aria-label="Play animations">
+            <svg class="icon-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.6v12.8a1 1 0 0 0 1.5.86l10.2-6.4a1 1 0 0 0 0-1.72L9.5 4.74A1 1 0 0 0 8 5.6Z" /></svg>
+            <svg class="icon-stop" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="2" /></svg>
+            <span>Play</span>
+          </button>
           <button class="btn" id="copy-btn" type="button">Copy</button>
           <button class="btn download" id="download-btn" type="button" title="Download as HTML presentation (keeps animations)" aria-label="Download HTML"><svg class="dl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M4 19h16" /></svg>HTML</button>
           <button class="btn download" id="pptx-btn" type="button" title="Download as PowerPoint (.pptx)" aria-label="Download PPTX"><svg class="dl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M4 19h16" /></svg>PPTX</button>
