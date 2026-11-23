@@ -949,11 +949,12 @@ export class SlideEditor {
   private fillFields(edits: FieldEdit[]) {
     let changed = 0;
     for (const edit of edits) {
-      const component = this.deck.slides
-        .find((slide) => slide.id === edit.slideId)
-        ?.components.find((item) => item.id === edit.componentId);
-      if (!component || component.type !== "input" || component.text === edit.text) continue;
+      const slide = this.deck.slides.find((item) => item.id === edit.slideId);
+      const component = slide?.components.find((item) => item.id === edit.componentId);
+      if (!slide || !component || component.type !== "input" || component.text === edit.text) continue;
       component.text = edit.text;
+      // Changed in place, so the cached filmstrip preview no longer matches.
+      this.thumbCache.delete(slide);
       changed += 1;
     }
     if (changed) this.commit(changed > 1 ? `Filled ${changed} fields` : "Filled field", false);
