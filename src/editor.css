@@ -648,6 +648,50 @@ button.btn.download .dl {
   outline: none;
 }
 
+/*
+ * Input field: a box that is typed into while presenting. In the editor it
+ * behaves like any other layer; the dashed ring and the placeholder mark it
+ * as fillable. In presenter mode the text is a real textarea.
+ */
+.el[data-type="input"] .text {
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.el[data-type="input"] div.text:empty::before {
+  content: attr(data-placeholder);
+  opacity: 0.45;
+}
+
+#slide .el[data-type="input"]:not(.editing) {
+  outline: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 3px;
+}
+
+.el textarea.text,
+.el textarea.text:focus,
+.el textarea.text:focus-visible {
+  display: block;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  resize: none;
+  overflow: auto;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.el textarea.text::placeholder {
+  color: inherit;
+  opacity: 0.45;
+}
+
 .el.editing {
   z-index: 4;
   outline: 2px solid var(--accent);

@@ -17,6 +17,40 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
+function unescapeHtml(value: string): string {
+  return value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&amp;", "&");
+}
+
+/** djb2; enough to tell one export of a deck from the next. */
+function stampOf(value: string): string {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i++) hash = ((hash * 33) ^ value.charCodeAt(i)) >>> 0;
+  return hash.toString(36);
+}
+
+function hasInputs(deck: Deck): boolean {
+  return deck.slides.some((slide) => slide.components.some((component) => component.type === "input"));
+}
+
+function textCss(component: SlideComponent): string {
+  return [
+    `font-size:${component.fontSize ?? 32}px`,
+    `font-weight:${component.fontWeight ?? 500}`,
+    `font-family:${component.fontFamily ?? "Inter, system-ui, sans-serif"}`,
+    `color:${component.color ?? "#111827"}`,
+    `text-align:${component.textAlign ?? "left"}`,
+    `line-height:${component.lineHeight ?? 1.25}`,
+    component.letterSpacing != null ? `letter-spacing:${component.letterSpacing}px` : "",
+    `white-space:pre-wrap`,
+  ]
+    .filter(Boolean)
+    .join(";");
+}
+
 function cssSize(component: SlideComponent): string {
   return [
     `position:absolute`,
@@ -47,19 +81,14 @@ function renderComponent(component: SlideComponent): string {
   const common = `data-component="${component.type}" data-id="${component.id}" data-name="${escapeHtml(component.name)}" style="${escapeHtml(cssSize(component))}"`;
 
   if (component.type === "text") {
-    const style = [
-      `font-size:${component.fontSize ?? 32}px`,
-      `font-weight:${component.fontWeight ?? 500}`,
-      `font-family:${component.fontFamily ?? "Inter, system-ui, sans-serif"}`,
-      `color:${component.color ?? "#111827"}`,
-      `text-align:${component.textAlign ?? "left"}`,
-      `line-height:${component.lineHeight ?? 1.25}`,
-      component.letterSpacing != null ? `letter-spacing:${component.letterSpacing}px` : "",
-      `white-space:pre-wrap`,
-    ]
-      .filter(Boolean)
-      .join(";");
-    return `<div ${common}><div style="${escapeHtml(style)}">${escapeHtml(component.text ?? "")}</div></div>`;
+    return `<div ${common}><div style="${escapeHtml(textCss(component))}">${escapeHtml(component.text ?? "")}</div></div>`;
+  }
+
+  if (component.type === "input") {
+    // A real textarea, so the exported file can be typed into. The value is
+    // its content; the newline after the tag is dropped by the HTML parser
+    // and keeps a value that itself starts with a line break intact.
+    return `<div ${common}><textarea data-field aria-label="${escapeHtml(component.name)}" placeholder="${escapeHtml(component.placeholder ?? "")}" spellcheck="false" style="${escapeHtml(textCss(component))}">\n${escapeHtml(component.text ?? "")}</textarea></div>`;
   }
 
   if (component.type === "image") {
@@ -139,13 +168,26 @@ function animationCss(deck: Deck): string {
  * click / swipe navigation, click-revealed build steps, an overview grid on
  * Esc, the slide number in the URL hash. Print gets every slide on its own
  * page. Kept dependency-free and small so the file stays a plain HTML deck.
+ *
+ * Input fields are typed into right in the file. While one has focus, keys
+ * and clicks are its own and never change the slide. What is typed is kept
+ * in localStorage (per file path and export, so a newer export is not
+ * overwritten by old input), and "Save copy" / ⌘S downloads the file again
+ * with the text written into both the markup and the embedded deck JSON, so
+ * the copy re-imports into the canvas with the fields filled in.
  */
 const PRESENTATION_CSS = `
     html, body { margin: 0; height: 100%; background: #0b1220; overflow: hidden; font-family: Inter, system-ui, sans-serif; }
     .deck { position: fixed; inset: 0; }
     .slide { position: absolute; left: 50%; top: 50%; display: none; overflow: hidden; transform: translate(-50%, -50%) scale(var(--s, 1)); transform-origin: center; box-shadow: 0 24px 80px rgba(0,0,0,.35); }
     .slide.active { display: block; }
-    .slide.active [data-step].pending { opacity: 0 !important; animation: none !important; }
+    .slide.active [data-step].pending { opacity: 0 !important; animation: none !important; pointer-events: none; }
+    .slide textarea[data-field] { display: block; width: 100%; height: 100%; box-sizing: border-box; margin: 0; padding: 0; border: 0; outline: 0; background: transparent; resize: none; overflow: auto; }
+    .slide textarea[data-field]::placeholder { color: inherit; opacity: .45; }
+    .slide [data-component="input"]:focus-within { outline: 3px solid #4469fc; outline-offset: 2px; }
+    .save { position: fixed; right: 16px; top: 12px; padding: 6px 10px; border: 0; border-radius: 8px; background: rgba(11,18,32,.82); color: #fff; font: inherit; font-size: 12px; cursor: pointer; opacity: 0; pointer-events: none; transition: opacity .4s; }
+    body.hud .save, body.dirty .save { opacity: 1; pointer-events: auto; }
+    body.dirty .save::after { content: " •"; color: #8fa5ff; }
     /* HUD: only while the pointer moves, so it never sits on a slide's own footer. */
     .counter, .hint, .progress { opacity: 0; transition: opacity .4s; pointer-events: none; user-select: none; }
     body.hud .counter, body.hud .hint, body.hud .progress { opacity: 1; }
@@ -156,6 +198,7 @@ const PRESENTATION_CSS = `
     body.overview .slide { display: block; position: relative; left: auto; top: auto; transform: none; zoom: 0.2; cursor: pointer; outline: 8px solid transparent; }
     body.overview .slide.active { outline-color: #4469fc; }
     body.overview .slide [data-step].pending { opacity: 1 !important; }
+    body.overview .slide textarea { pointer-events: none; }
     body.overview .counter, body.overview .progress, body.overview .hint { display: none; }
     @page { size: ${SLIDE_WIDTH}px ${SLIDE_HEIGHT}px; margin: 0; }
     @media print {
@@ -163,13 +206,15 @@ const PRESENTATION_CSS = `
       .deck { position: static; }
       .slide { display: block; position: relative; left: auto; top: auto; transform: none; box-shadow: none; page-break-after: always; }
       .slide [data-step].pending { opacity: 1 !important; }
-      .counter, .progress, .hint { display: none; }
+      .counter, .progress, .hint, .save { display: none; }
     }`;
 
 const PRESENTATION_SCRIPT = `<script>
 (function(){
 var slides=[].slice.call(document.querySelectorAll(".slide")),n=slides.length,i=0,body=document.body;
 var counter=document.querySelector(".counter"),progress=document.querySelector(".progress"),hint=document.querySelector(".hint");
+var fields=[].slice.call(document.querySelectorAll("textarea[data-field]")),deckEl=document.querySelector(".deck"),saveBtn=document.querySelector(".save");
+function isField(t){return !!(t&&t.closest&&t.closest("textarea,input,select,[contenteditable]"))}
 function fit(){var s=Math.min(innerWidth/${SLIDE_WIDTH},innerHeight/${SLIDE_HEIGHT});document.documentElement.style.setProperty("--s",s)}
 function steps(s){return [].slice.call(s.querySelectorAll("[data-step]"))}
 function pending(s){return steps(s).filter(function(e){return e.classList.contains("pending")})}
@@ -181,7 +226,28 @@ function prev(){var shown=steps(slides[i]).filter(function(e){return !e.classLis
 function overview(on){body.classList.toggle("overview",on);if(on&&slides[i].scrollIntoView)slides[i].scrollIntoView({block:"center"})}
 addEventListener("resize",fit);fit();
 show(Math.max(0,(parseInt(location.hash.slice(1),10)||1)-1));
+var storeKey="ld-fields:"+location.pathname,stamp=deckEl.getAttribute("data-stamp")||"";
+function fieldId(f){return f.parentNode.getAttribute("data-id")}
+function values(){var v={};fields.forEach(function(f){v[fieldId(f)]=f.value});return v}
+function remember(){try{localStorage.setItem(storeKey,JSON.stringify({stamp:stamp,values:values()}))}catch(_){}}
+try{var kept=JSON.parse(localStorage.getItem(storeKey)||"null");
+ if(kept&&kept.stamp===stamp&&kept.values)fields.forEach(function(f){var v=kept.values[fieldId(f)];if(typeof v==="string"&&v!==f.value){f.value=v;body.classList.add("dirty")}})}catch(_){}
+fields.forEach(function(f){f.addEventListener("input",function(){body.classList.add("dirty");remember()})});
+function save(){
+ var v=values(),root=document.documentElement.cloneNode(true),tag=root.querySelector("#deck-data"),copies=root.querySelectorAll("textarea[data-field]");
+ fields.forEach(function(f,k){copies[k].textContent="\\n"+f.value});
+ try{var d=JSON.parse(tag.textContent);d.slides.forEach(function(s){s.components.forEach(function(c){if(typeof v[c.id]==="string")c.text=v[c.id]})});
+  d.updatedAt=new Date().toISOString();tag.textContent=JSON.stringify(d).replace(/</g,"\\\\u003c")}catch(_){}
+ root.removeAttribute("style");root.querySelector("body").removeAttribute("class");
+ root.querySelector(".deck").setAttribute("data-stamp",String(Date.now()));
+ [].forEach.call(root.querySelectorAll(".active,.pending"),function(e){e.classList.remove("active","pending")});
+ var a=document.createElement("a");a.href=URL.createObjectURL(new Blob(["<!DOCTYPE html>\\n"+root.outerHTML+"\\n"],{type:"text/html"}));
+ a.download=decodeURIComponent(location.pathname.split("/").pop()||"")||"deck.html";a.click();
+ setTimeout(function(){URL.revokeObjectURL(a.href)},1000);body.classList.remove("dirty")}
+if(saveBtn)saveBtn.addEventListener("click",save);
 addEventListener("keydown",function(e){
+ if((e.metaKey||e.ctrlKey)&&!e.altKey&&(e.key==="s"||e.key==="S")&&fields.length){e.preventDefault();save();return}
+ if(isField(e.target)){if(e.key==="Escape")e.target.blur();return}
  if(e.metaKey||e.ctrlKey||e.altKey)return;
  if(["ArrowRight","ArrowDown"," ","PageDown","Enter"].indexOf(e.key)>-1){e.preventDefault();body.classList.contains("overview")?show(i+1):next()}
  else if(["ArrowLeft","ArrowUp","PageUp","Backspace"].indexOf(e.key)>-1){e.preventDefault();body.classList.contains("overview")?show(i-1):prev()}
@@ -189,17 +255,20 @@ addEventListener("keydown",function(e){
  else if(e.key==="Escape"||e.key==="o"){overview(!body.classList.contains("overview"))}
  else if(e.key==="f"){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen()}
 });
+var leftField=false;document.addEventListener("mousedown",function(e){var a=document.activeElement;leftField=isField(a)&&e.target!==a});
 document.addEventListener("click",function(e){
- if(e.target.closest("a,button,input,textarea,select")){return}
+ var left=leftField;leftField=false;
+ if(e.target.closest("a,button")){return}
  var s=e.target.closest(".slide");
  if(body.classList.contains("overview")){if(s){show(slides.indexOf(s),true);overview(false)}return}
+ if(left||e.target.closest("input,textarea,select")){return}
  e.clientX<innerWidth*0.2?prev():next()});
-var tx=null;addEventListener("touchstart",function(e){tx=e.touches[0].clientX},{passive:true});
+var tx=null;addEventListener("touchstart",function(e){tx=isField(e.target)?null:e.touches[0].clientX},{passive:true});
 addEventListener("touchend",function(e){if(tx===null)return;var dx=e.changedTouches[0].clientX-tx;tx=null;if(Math.abs(dx)>40){dx<0?next():prev()}});
 addEventListener("hashchange",function(){var k=(parseInt(location.hash.slice(1),10)||1)-1;if(k!==i)show(k,true)});
 var hudTimer;function hud(){body.classList.add("hud");clearTimeout(hudTimer);hudTimer=setTimeout(function(){body.classList.remove("hud")},2500)}
 addEventListener("mousemove",hud);addEventListener("touchstart",hud,{passive:true});hud();
-setTimeout(function(){hint.remove()},8000);
+setTimeout(function(){if(hint)hint.remove()},8000);
 })();
 </script>`;
 
@@ -207,6 +276,8 @@ export function deckToHtml(deck: Deck): string {
   // No id: an exported file re-imported elsewhere must get its own deck.
   const payload = JSON.stringify({ ...deck, id: undefined, rawHtml: undefined });
   const animations = animationCss(deck);
+  // Fillable decks get a stamp (typed text is remembered per export) and a way to save a filled-in copy.
+  const fillable = hasInputs(deck);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -220,12 +291,13 @@ ${deck.fontCss ? `  <style>\n${deck.fontCss}\n  </style>\n` : ""}  <style>${PRES
   </style>
 </head>
 <body>
-  <main class="deck">
+  <main class="deck"${fillable ? ` data-stamp="${stampOf(payload)}"` : ""}>
 ${deck.slides.map(renderSlide).join("\n")}
   </main>
   <div class="counter"></div>
   <div class="progress"></div>
-  <div class="hint">← → to navigate · Esc overview · F full screen</div>
+  <div class="hint">← → to navigate · Esc overview · F full screen${fillable ? " · click a field to type · ⌘/Ctrl+S saves a copy" : ""}</div>
+${fillable ? `  <button class="save" type="button" title="Download this file with the fields filled in (⌘/Ctrl+S)">Save copy</button>\n` : ""}
   <script type="application/json" id="${DECK_MARKER}">${payload.replaceAll("<", "\\u003c")}</script>
 ${PRESENTATION_SCRIPT}
 </body>
@@ -321,6 +393,19 @@ function parseExportedDeck(html: string): Deck | null {
         component.fontFamily = styleValue(textStyle, "font-family") || undefined;
         component.color = styleValue(textStyle, "color") || "#111827";
         component.textAlign = (styleValue(textStyle, "text-align") as TextAlign) || "left";
+      }
+      if (type === "input") {
+        const fieldTag = inner.match(/<textarea\b([^>]*)>/i)?.[1] ?? "";
+        const fieldStyle = unescapeHtml(attr(fieldTag, "style"));
+        component.text = unescapeHtml(inner.replace(/^[\s\S]*?<textarea\b[^>]*>\n?/i, "").replace(/<\/textarea>[\s\S]*$/i, ""));
+        component.placeholder = unescapeHtml(attr(fieldTag, "placeholder"));
+        component.fontSize = px(styleValue(fieldStyle, "font-size"), 32);
+        component.fontWeight = Number(styleValue(fieldStyle, "font-weight") || 500);
+        component.fontFamily = styleValue(fieldStyle, "font-family") || undefined;
+        component.color = styleValue(fieldStyle, "color") || "#111827";
+        component.textAlign = (styleValue(fieldStyle, "text-align") as TextAlign) || "left";
+        component.lineHeight = Number(styleValue(fieldStyle, "line-height")) || undefined;
+        component.padding = px(styleValue(boxStyle, "padding"), 0) || undefined;
       }
       if (type === "image") {
         component.src = inner.match(/src="([^"]*)"/)?.[1] ?? "";

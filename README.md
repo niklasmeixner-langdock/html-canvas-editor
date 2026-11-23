@@ -155,6 +155,31 @@ slide at a time, scaled to the window (letterboxed 16:9), no dependencies.
 - Counter, progress bar and key hint only show while the pointer moves
 - Print / save as PDF: every slide on its own 1920×1080 page
 - The deck JSON is embedded, so the file re-imports into the canvas losslessly
+- **Input fields** are typed into right in the file. While a field has focus,
+  keys and clicks belong to it (`Esc` leaves it), so writing never changes the
+  slide. Text is remembered in the browser (`localStorage`, per file path and
+  export); **Save copy** or `⌘/Ctrl+S` downloads the file again with the text
+  written into the markup and the embedded deck JSON, so the copy can be sent
+  on or re-imported with the fields filled in.
+
+## Presenter mode
+
+**Present** in the top bar (or `⌘/Ctrl+Enter`) plays the deck over the whole
+app, starting on the current slide, without downloading anything. It asks the
+browser for full screen and, inside a host, for the host's full screen display
+mode; both are restored on exit.
+
+- Same controls as the exported file: `→` `↓` `Space` `PageDown` `Enter` next
+  (build steps first), `←` `↑` `PageUp` `Backspace` back, `Home`/`End`, click
+  right 80 % / left 20 %, swipe. `F` toggles full screen, `Esc` exits and
+  leaves the editor on the slide that was showing.
+- Controls and the progress bar only show while the pointer moves.
+- Slides are read-only while presenting, with one exception: **input fields**.
+  Click one and type; the text goes back into the deck (one undo step per
+  pause) and is saved like any other edit. Free editing of everything else
+  stays in the editor, one `Esc` away, so nothing moves by accident in front
+  of an audience.
+- Not included: speaker notes and a second-screen presenter view.
 
 ## Editor
 
@@ -167,8 +192,17 @@ slide at a time, scaled to the window (letterboxed 16:9), no dependencies.
 - Multi-select: drag a marquee on empty slide space, Shift/⌘-click to add or
   remove layers (canvas or layer list), ⌘A for all. Move, nudge, duplicate,
   delete and reorder act on the whole selection.
-- Insert **text**, **image**, or **frame**
+- Insert **text**, **image**, **frame**, or an **input field** (a box that is
+  typed into while presenting and in the downloaded HTML; placeholder, value
+  and type styles are set in the properties panel, and it exports to PowerPoint
+  as a text box with whatever was typed)
 - Drag to move, handles to resize, double-click text to edit
+- Slides: drag a thumbnail in the filmstrip to reorder, hover it for the
+  delete button; with a thumbnail focused `←`/`→` walk the slides,
+  `⌘/Ctrl+←`/`→` move the slide and `Delete` removes it. The slide properties
+  (nothing selected) have the same move and delete buttons. A deck always
+  keeps one slide; deleting is undone with `⌘Z`.
+- **Present** (`⌘/Ctrl+Enter`): see [Presenter mode](#presenter-mode)
 - Layers, undo (`⌘Z`), duplicate (`⌘D`), arrow-key nudge
 - Existing decks come in through chat (`open_slide_canvas` with the attached
   file); there is deliberately no in-app file picker

@@ -2,6 +2,7 @@ import { cssColorToHex } from "./color.ts";
 import { ensureFontStyles, flattenHtmlDocument, needsFlatten, prepareDeckFonts } from "./flatten.ts";
 import { animationValue, deckToHtml } from "./html.ts";
 import { Presenter } from "./presenter.ts";
+import type { FieldEdit } from "./presenter.ts";
 import { componentNode, ensureAnimationKeyframes } from "./render.ts";
 import type { LayerAnimation } from "./types.ts";
 import type { Deck, Slide, SlideComponent } from "./types.ts";
@@ -11,11 +12,12 @@ import {
   clampComponent,
   defaultComponent,
   emptySlide,
+  isTextual,
   uid,
 } from "./types.ts";
 import "./editor.css";
 
-export type Tool = "select" | "text" | "image" | "container";
+export type Tool = "select" | "text" | "image" | "container" | "input";
 type Handle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 
 const HANDLES: Handle[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
@@ -231,7 +233,8 @@ export class SlideEditor {
     this.root.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
       button.addEventListener("click", () => {
         this.tool = button.dataset.tool as Tool;
-        this.status = this.tool === "select" ? "Select" : `Click the slide to add ${this.tool}`;
+        this.status =
+          this.tool === "select" ? "Select" : `Click the slide to add ${this.tool === "input" ? "an input field" : this.tool}`;
         this.renderTools();
         this.renderStatus();
       });
@@ -404,7 +407,7 @@ export class SlideEditor {
       !additive && !!hit && !!this.lastClick && this.lastClick.id === hit.id && now - this.lastClick.at < 450;
     this.lastClick = hit ? { id: hit.id, at: now } : null;
 
-    if (hit && isDouble && hit.type === "text") {
+    if (hit && isDouble && isTextual(hit)) {
       this.selectedId = hit.id;
       this.lastClick = null;
       event.preventDefault();
@@ -589,7 +592,7 @@ export class SlideEditor {
   private onDoubleClick(event: MouseEvent) {
     if (this.editing) return;
     const hit = this.hit(this.clientToSlide(event).x, this.clientToSlide(event).y);
-    if (hit?.type === "text") {
+    if (isTextual(hit)) {
       this.selectedId = hit.id;
       this.startTextEdit();
     }
@@ -616,7 +619,7 @@ export class SlideEditor {
       this.pendingImageId = created.id;
       this.el<HTMLInputElement>("file").click();
     }
-    this.commit(type === "text" ? "Added text" : `Added ${type}`);
+    this.commit(type === "text" ? "Added text" : type === "input" ? "Added input field" : `Added ${type}`);
     if (type === "text") this.startTextEdit();
     return created;
   }
@@ -643,7 +646,7 @@ export class SlideEditor {
   }
 
   private startTextEdit() {
-    if (this.selected()?.type !== "text") return;
+    if (!isTextual(this.selected())) return;
     this.editing = true;
     this.renderSlide();
     this.renderOverlay();
@@ -681,7 +684,7 @@ export class SlideEditor {
     node?.removeAttribute("contenteditable");
     this.root.querySelector(".el.editing")?.classList.remove("editing");
     const selected = this.selected();
-    if (!selected || selected.type !== "text") return;
+    if (!isTextual(selected)) return;
     if (selected.text === text) {
       if (commitChange) this.renderOverlay();
       return;
@@ -919,6 +922,7 @@ export class SlideEditor {
     this.presenter = new Presenter({
       deck,
       index: this.slideIndex,
+      onFill: (edits) => this.fillFields(edits),
       onClose: (index) => {
         this.presenter = null;
         if (index !== this.slideIndex && this.deck.slides[index]) {
@@ -931,6 +935,24 @@ export class SlideEditor {
         this.onPresentEnd?.();
       },
     });
+  }
+
+  /**
+   * Text typed into input fields while presenting. One history step per
+   * batch, saved like any other edit. No redraw: the editor is covered, and
+   * it renders when the presentation ends.
+   */
+  private fillFields(edits: FieldEdit[]) {
+    let changed = 0;
+    for (const edit of edits) {
+      const component = this.deck.slides
+        .find((slide) => slide.id === edit.slideId)
+        ?.components.find((item) => item.id === edit.componentId);
+      if (!component || component.type !== "input" || component.text === edit.text) continue;
+      component.text = edit.text;
+      changed += 1;
+    }
+    if (changed) this.commit(changed > 1 ? `Filled ${changed} fields` : "Filled field", false);
   }
 
   get presenting(): boolean {
@@ -976,7 +998,7 @@ export class SlideEditor {
       this.selectAll();
       return;
     }
-    if (event.key === "Enter" && this.selected()?.type === "text") {
+    if (event.key === "Enter" && isTextual(this.selected())) {
       event.preventDefault();
       this.startTextEdit();
       return;
@@ -1313,9 +1335,15 @@ export class SlideEditor {
       </div>
       <div class="field"><label>Name</label><input id="prop-name" value="${escape(selected.name)}" /></div>
       ${
-        selected.type === "text"
+        isTextual(selected)
           ? `
-        <div class="field"><label>Text</label><textarea id="prop-text">${escape(selected.text ?? "")}</textarea></div>
+        ${
+          selected.type === "input"
+            ? `<p class="hint">Typed into while presenting, and in the downloaded HTML. The value is saved with the deck.</p>
+        <div class="field"><label>Placeholder</label><input id="prop-placeholder" value="${escape(selected.placeholder ?? "")}" /></div>`
+            : ""
+        }
+        <div class="field"><label>${selected.type === "input" ? "Value" : "Text"}</label><textarea id="prop-text">${escape(selected.text ?? "")}</textarea></div>
         ${numField("Size", "prop-size", selected.fontSize ?? 32)}
         <div class="field"><label>Color</label><input id="prop-color" type="color" value="${cssColorToHex(selected.color ?? "#111827")}" /></div>
         <div class="field"><label>Align</label>
@@ -1342,7 +1370,7 @@ export class SlideEditor {
           : ""
       }
       ${
-        selected.type === "container" || selected.type === "html"
+        selected.type === "container" || selected.type === "html" || selected.type === "input"
           ? `
         <div class="field"><label>Fill</label><input id="prop-bg" type="color" value="${cssColorToHex(selected.background ?? "#ffffff")}" /></div>
         ${numField("Radius", "prop-radius", selected.borderRadius ?? 0)}`
@@ -1374,6 +1402,7 @@ export class SlideEditor {
       const node = this.textNode();
       if (node) node.textContent = value;
     }, "input");
+    this.bindField("prop-placeholder", (value) => this.mutateSelected({ placeholder: value }, "Edited placeholder"));
     bindNum("prop-size", "fontSize");
     this.bindField("prop-color", (value) => this.mutateSelected({ color: value }), "input");
     this.bindField("prop-align", (value) => {

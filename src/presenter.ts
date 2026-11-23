@@ -10,10 +10,20 @@ export type PresenterOptions = {
   index: number;
   /** Called once when the presentation ends, with the slide it ended on. */
   onClose: (index: number) => void;
+  /** Text was typed into input fields; called with what changed since the last call. */
+  onFill?: (edits: FieldEdit[]) => void;
 };
+
+export type FieldEdit = { slideId: string; componentId: string; text: string };
 
 const HUD_MS = 2500;
 const SWIPE_PX = 40;
+/** Pause in typing after which field text is handed to the editor (and saved). */
+const FILL_FLUSH_MS = 1200;
+
+function fieldOf(target: EventTarget | null): HTMLTextAreaElement | null {
+  return target instanceof HTMLTextAreaElement ? target : null;
+}
 
 const ICON = {
   prev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>',
@@ -27,6 +37,10 @@ const ICON = {
  * the window. Same behaviour as the exported file (keys, click zones, swipe,
  * click-revealed build steps, entrance animations), but it runs on the live
  * deck inside the editor, so nothing has to be downloaded to present.
+ *
+ * Slides are read-only here except for input fields: those are typed into,
+ * and what is typed goes back to the editor through `onFill`. While a field
+ * has focus, keys and clicks belong to it and never change the slide.
  *
  * Rendered with the editor's own layer renderer rather than the export in an
  * iframe: MCP hosts sandbox the app, and a nested frame is not reliable there.
@@ -47,6 +61,11 @@ export class Presenter {
   private keepOpen = false;
   private wasFullscreen = false;
   private readonly observer: ResizeObserver;
+  /** Field text typed since the last `onFill`, by component id. */
+  private readonly edits = new Map<string, FieldEdit>();
+  private fillTimer: number | undefined;
+  /** The press that started this click took focus out of a field. */
+  private leftField = false;
 
   constructor(private readonly options: PresenterOptions) {
     this.deck = options.deck;
@@ -79,6 +98,9 @@ export class Presenter {
     document.body.append(this.root);
 
     this.root.addEventListener("click", this.onClick);
+    this.root.addEventListener("pointerdown", this.onPointerDown);
+    this.slideEl.addEventListener("input", this.onFieldInput);
+    this.slideEl.addEventListener("change", this.flushFields);
     this.root.addEventListener("mousemove", this.showHud);
     this.root.addEventListener("touchstart", this.onTouchStart, { passive: true });
     this.root.addEventListener("touchend", this.onTouchEnd);
@@ -106,6 +128,7 @@ export class Presenter {
   close() {
     if (this.closed) return;
     this.closed = true;
+    this.flushFields();
     window.clearTimeout(this.hudTimer);
     window.removeEventListener("keydown", this.onKey, true);
     document.removeEventListener("fullscreenchange", this.onFullscreenChange);
@@ -139,13 +162,16 @@ export class Presenter {
    * still, so stepping backwards never replays what was just watched.
    */
   private show(index: number, fromBack = false) {
+    // The focused field is about to be removed, which fires no `change`.
+    this.flushFields();
+    const hadFocus = this.slideEl.contains(document.activeElement);
     this.index = Math.max(0, Math.min(index, this.deck.slides.length - 1));
     const slide = this.slide();
     this.revealed = fromBack ? this.steps(slide).length : 0;
     this.slideEl.style.background = slide.background;
     this.slideEl.replaceChildren(
       ...slide.components.map((component) => {
-        const node = componentNode(component);
+        const node = componentNode(component, true);
         if (fromBack) return node;
         if (component.animation?.step) node.classList.add("pending");
         else node.style.animation = animationValue(component, false);
@@ -157,7 +183,30 @@ export class Presenter {
     this.bar.style.width = `${((this.index + 1) / total) * 100}%`;
     this.root.querySelector<HTMLButtonElement>('[data-action="prev"]')!.disabled = this.index === 0;
     this.updateNext();
+    if (hadFocus) this.root.focus({ preventScroll: true });
   }
+
+  private readonly onFieldInput = (event: Event) => {
+    const field = fieldOf(event.target);
+    const id = field?.closest<HTMLElement>(".el")?.dataset.id;
+    const slide = this.slide();
+    const component = slide.components.find((item) => item.id === id);
+    if (!field || !component) return;
+    // Keep our copy current too, so the text is there when coming back to this slide.
+    component.text = field.value;
+    this.edits.set(component.id, { slideId: slide.id, componentId: component.id, text: field.value });
+    window.clearTimeout(this.fillTimer);
+    this.fillTimer = window.setTimeout(this.flushFields, FILL_FLUSH_MS);
+  };
+
+  /** Hand typed field text to the editor: on a pause, on leaving the field, the slide or the presentation. */
+  private readonly flushFields = () => {
+    window.clearTimeout(this.fillTimer);
+    if (!this.edits.size) return;
+    const edits = [...this.edits.values()];
+    this.edits.clear();
+    this.options.onFill?.(edits);
+  };
 
   private updateNext() {
     const atEnd = this.index === this.deck.slides.length - 1 && this.revealed >= this.steps(this.slide()).length;
@@ -240,6 +289,17 @@ export class Presenter {
 
   private readonly onKey = (event: KeyboardEvent) => {
     event.stopPropagation();
+    // Typing into a field: every key is the field's (Space, arrows, Enter,
+    // ⌘Z …). Only Esc is ours, and it leaves the field, not the presentation.
+    const field = fieldOf(event.target);
+    if (field && this.root.contains(field)) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        field.blur();
+        this.root.focus({ preventScroll: true });
+      }
+      return;
+    }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const key = event.key;
     if (key === "Escape") {
@@ -264,6 +324,8 @@ export class Presenter {
   };
 
   private readonly onClick = (event: MouseEvent) => {
+    const leftField = this.leftField;
+    this.leftField = false;
     const button = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
     if (button) {
       const action = button.dataset.action;
@@ -277,13 +339,22 @@ export class Presenter {
       return;
     }
     if ((event.target as HTMLElement).closest(".presenter-hud")) return;
+    if (fieldOf(event.target)) return;
+    // Clicking out of a field only leaves it; the next click navigates again.
+    if (leftField) return;
     const rect = this.root.getBoundingClientRect();
     if (event.clientX - rect.left < rect.width * 0.2) this.prev();
     else this.next();
   };
 
+  private readonly onPointerDown = (event: PointerEvent) => {
+    const focused = fieldOf(document.activeElement);
+    this.leftField = !!focused && this.root.contains(focused) && event.target !== focused;
+  };
+
   private readonly onTouchStart = (event: TouchEvent) => {
-    this.touchX = event.touches[0]?.clientX ?? null;
+    // A swipe inside a field scrolls or selects its text.
+    this.touchX = fieldOf(event.target) ? null : (event.touches[0]?.clientX ?? null);
     this.showHud();
   };
 

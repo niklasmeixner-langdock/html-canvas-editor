@@ -4,8 +4,12 @@ import type { SlideComponent } from "./types.ts";
 /**
  * DOM for one layer, shared by the editor canvas and the presenter so a slide
  * looks the same in both. Styling comes from `.el` in editor.css.
+ *
+ * With `fillable` (presenter mode) an input field is a real textarea the
+ * presenter types into; in the editor it is plain text like any other layer,
+ * so it can be selected, moved and pre-filled without stealing the pointer.
  */
-export function componentNode(component: SlideComponent): HTMLElement {
+export function componentNode(component: SlideComponent, fillable = false): HTMLElement {
   const el = document.createElement("div");
   el.className = "el";
   el.dataset.id = component.id;
@@ -20,10 +24,19 @@ export function componentNode(component: SlideComponent): HTMLElement {
   el.style.border = component.border ?? "";
   el.style.padding = component.padding != null ? `${component.padding}px` : "";
 
-  if (component.type === "text") {
-    const text = document.createElement("div");
+  if (component.type === "text" || component.type === "input") {
+    const isInput = component.type === "input";
+    const text = document.createElement(isInput && fillable ? "textarea" : "div");
     text.className = "text";
-    text.textContent = component.text ?? "";
+    if (text instanceof HTMLTextAreaElement) {
+      text.value = component.text ?? "";
+      text.placeholder = component.placeholder ?? "";
+      text.spellcheck = false;
+      text.setAttribute("aria-label", component.name);
+    } else {
+      text.textContent = component.text ?? "";
+      if (isInput) text.dataset.placeholder = component.placeholder ?? "";
+    }
     text.style.fontSize = `${component.fontSize ?? 32}px`;
     text.style.fontWeight = String(component.fontWeight ?? 500);
     text.style.fontFamily = component.fontFamily ?? "Inter, system-ui, sans-serif";

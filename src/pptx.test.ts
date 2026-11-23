@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { deckToPptx } from "./pptx.ts";
 import { isPptx, pptxToDeck } from "./pptx-import.ts";
 import { sampleDeck } from "./sample.ts";
+import { defaultComponent, emptyDeck } from "./types.ts";
 
 test("recognises PowerPoint files by their bytes", () => {
   assert.equal(isPptx(new TextEncoder().encode("<html></html>"), "deck.html", "text/html"), false);
@@ -47,4 +48,15 @@ test("round-trips a deck through PowerPoint and keeps animations", async () => {
     assert.equal(back.step ?? undefined, component.animation!.step ?? undefined);
     assert.equal(back.delay, component.animation!.delay);
   }
+});
+
+test("exports an input field as a text box with what was typed into it", async () => {
+  const deck = emptyDeck("Workshop");
+  const field = defaultComponent("input", 200, 200);
+  field.text = "Decision: ship it";
+  deck.slides[0]!.components.push(field);
+
+  const restored = await pptxToDeck(await deckToPptx(deck));
+  const texts = restored.slides[0]?.components.filter((component) => component.type === "text") ?? [];
+  assert.ok(texts.some((component) => component.text === "Decision: ship it"));
 });

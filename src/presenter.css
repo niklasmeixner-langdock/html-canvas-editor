@@ -32,6 +32,13 @@
 .presenter-slide .el.pending {
   opacity: 0 !important;
   animation: none !important;
+  pointer-events: none;
+}
+
+/* Input fields: the one part of a slide that is typed into while presenting. */
+.presenter-slide .el[data-type="input"]:focus-within {
+  outline: 3px solid #4469fc;
+  outline-offset: 2px;
 }
 
 .presenter-progress {
