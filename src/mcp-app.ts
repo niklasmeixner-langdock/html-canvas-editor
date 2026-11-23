@@ -413,6 +413,39 @@ document.getElementById("download-btn")!.addEventListener("click", () => {
   void downloadHtml().catch((error) => setStatus(error instanceof Error ? error.message : "Download failed"));
 });
 document.getElementById("play-btn")!.addEventListener("click", () => editor.playAnimations());
+document.getElementById("present-btn")!.addEventListener("click", () => editor.present());
+
+/**
+ * Presenting from the chat card or the side panel: ask the host for its full
+ * screen surface for the duration, and hand the previous one back afterwards.
+ * (The presenter also tries the browser's own full screen; a sandboxed host
+ * frame usually refuses that, so this is what makes the slide big there.)
+ */
+let modeBeforePresenting: Exclude<Mode, "standalone"> | null = null;
+let presentModeRequest: Promise<void> = Promise.resolve();
+editor.onPresentStart = () => {
+  if (standalone || mode === "fullscreen" || mode === "standalone") return;
+  modeBeforePresenting = mode;
+  presentModeRequest = app
+    .requestDisplayMode({ mode: "fullscreen" })
+    .then((result) => setMode(result.mode))
+    .catch(() => {
+      /* host keeps the current surface; the presentation fills that */
+    });
+};
+editor.onPresentEnd = () => {
+  const previous = modeBeforePresenting;
+  modeBeforePresenting = null;
+  if (!previous) return;
+  // Wait for the host's answer first: a quick Esc must not leave it full screen.
+  void presentModeRequest.then(() => {
+    if (mode === previous || editor.presenting) return;
+    return app
+      .requestDisplayMode({ mode: previous })
+      .then((result) => setMode(result.mode))
+      .catch(() => undefined);
+  });
+};
 document.getElementById("panels-btn")!.addEventListener("click", () => {
   panelsOpen = !panelsOpen;
   applyLayout();

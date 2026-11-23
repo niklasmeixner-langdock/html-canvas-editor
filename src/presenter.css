@@ -1,0 +1,135 @@
+/*
+ * Presenter mode: black stage over the whole app, one slide scaled to fit.
+ * Layers reuse `.el` from editor.css. Chrome (controls, progress) only shows
+ * while the pointer moves, so it never sits on a slide's own footer.
+ */
+.presenter {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  overflow: hidden;
+  background: #000;
+  outline: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.presenter.idle {
+  cursor: none;
+}
+
+.presenter-slide {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  transform-origin: center;
+}
+
+/* Build steps wait here until the next click reveals them. */
+.presenter-slide .el.pending {
+  opacity: 0 !important;
+  animation: none !important;
+}
+
+.presenter-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 0;
+  background: #4469fc;
+  transition: width 250ms ease, opacity 300ms ease;
+}
+
+.presenter-hud,
+.presenter-hint {
+  position: absolute;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  border-radius: 10px;
+  background: rgba(19, 20, 27, 0.82);
+  color: #f5f4f2;
+  font-size: 12px;
+  line-height: 1;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 24px rgba(0, 0, 0, 0.4);
+  transition: opacity 300ms ease;
+}
+
+.presenter-hud {
+  left: 50%;
+  transform: translateX(-50%);
+  gap: 2px;
+  padding: 4px;
+}
+
+.presenter-hint {
+  left: 16px;
+  padding: 9px 10px;
+  color: rgba(245, 244, 242, 0.7);
+  pointer-events: none;
+}
+
+.presenter.idle .presenter-hud,
+.presenter.idle .presenter-hint,
+.presenter.idle .presenter-progress {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.presenter-hud button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.presenter-hud button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.presenter-hud button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.presenter-hud button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.presenter-hud i {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.presenter-counter {
+  min-width: 52px;
+  padding: 0 4px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Narrow surfaces (chat card): the hint would run into the controls. */
+@media (max-width: 640px) {
+  .presenter-hint {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .presenter-slide .el {
+    animation: none !important;
+  }
+}
