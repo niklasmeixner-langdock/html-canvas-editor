@@ -1,6 +1,9 @@
 import { cssColorToHex } from "./color.ts";
 import { ensureFontStyles, flattenHtmlDocument, needsFlatten, prepareDeckFonts } from "./flatten.ts";
-import { ANIMATION_KEYFRAMES, animationValue, deckToHtml } from "./html.ts";
+import { animationValue, deckToHtml } from "./html.ts";
+import { Presenter } from "./presenter.ts";
+import type { FieldEdit } from "./presenter.ts";
+import { componentNode, ensureAnimationKeyframes } from "./render.ts";
 import type { LayerAnimation } from "./types.ts";
 import type { Deck, Slide, SlideComponent } from "./types.ts";
 import {
@@ -9,11 +12,12 @@ import {
   clampComponent,
   defaultComponent,
   emptySlide,
+  isTextual,
   uid,
 } from "./types.ts";
 import "./editor.css";
 
-export type Tool = "select" | "text" | "image" | "container";
+export type Tool = "select" | "text" | "image" | "container" | "input";
 type Handle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 
 const HANDLES: Handle[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
@@ -46,6 +50,7 @@ function snapshot(deck: Deck): Deck {
 }
 
 const HISTORY_LIMIT = 40;
+const UNDO_KEY = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘Z" : "Ctrl+Z";
 
 export class SlideEditor {
   deck: Deck;
@@ -58,6 +63,9 @@ export class SlideEditor {
   panY = 36;
   status = "Ready";
   onChange: ((deck: Deck) => void) | null = null;
+  /** Presenter mode started / ended; the app shell uses it to ask the host for full screen. */
+  onPresentStart: (() => void) | null = null;
+  onPresentEnd: (() => void) | null = null;
 
   private history: Deck[] = [];
   private future: Deck[] = [];
@@ -74,6 +82,11 @@ export class SlideEditor {
   /** Manual double-click tracking: re-rendering the slide between clicks
    *  swaps DOM nodes, so the browser's own dblclick never fires. */
   private lastClick: { id: string; at: number } | null = null;
+  private presenter: Presenter | null = null;
+  /** Filmstrip drag: reordering a slide by dragging its thumbnail. */
+  private thumbDrag: { from: number; startX: number; pointerId: number; to: number; active: boolean } | null = null;
+  /** A drag ends with a click on the thumbnail; that one must not select. */
+  private suppressThumbClick = false;
   private drag:
     | {
         kind: "move" | "resize" | "pan" | "marquee";
@@ -118,6 +131,8 @@ export class SlideEditor {
   }
 
   setDeck(deck: Deck, status = "Loaded") {
+    // A different deck arrived (host tool result): stop presenting the old one.
+    this.presenter?.close();
     this.finishTextEdit();
     this.deck = snapshot(deck);
     prepareDeckFonts(this.deck);
@@ -218,7 +233,8 @@ export class SlideEditor {
     this.root.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((button) => {
       button.addEventListener("click", () => {
         this.tool = button.dataset.tool as Tool;
-        this.status = this.tool === "select" ? "Select" : `Click the slide to add ${this.tool}`;
+        this.status =
+          this.tool === "select" ? "Select" : `Click the slide to add ${this.tool === "input" ? "an input field" : this.tool}`;
         this.renderTools();
         this.renderStatus();
       });
@@ -229,6 +245,7 @@ export class SlideEditor {
       this.fit();
     });
     this.el("add-slide").addEventListener("click", () => this.addSlide());
+    this.bindFilmstrip();
     this.el("delete-btn").addEventListener("click", () => this.removeSelected());
     this.el("front-btn").addEventListener("click", () => this.nudgeLayer(1));
     this.el("back-btn").addEventListener("click", () => this.nudgeLayer(-1));
@@ -390,7 +407,7 @@ export class SlideEditor {
       !additive && !!hit && !!this.lastClick && this.lastClick.id === hit.id && now - this.lastClick.at < 450;
     this.lastClick = hit ? { id: hit.id, at: now } : null;
 
-    if (hit && isDouble && hit.type === "text") {
+    if (hit && isDouble && isTextual(hit)) {
       this.selectedId = hit.id;
       this.lastClick = null;
       event.preventDefault();
@@ -575,7 +592,7 @@ export class SlideEditor {
   private onDoubleClick(event: MouseEvent) {
     if (this.editing) return;
     const hit = this.hit(this.clientToSlide(event).x, this.clientToSlide(event).y);
-    if (hit?.type === "text") {
+    if (isTextual(hit)) {
       this.selectedId = hit.id;
       this.startTextEdit();
     }
@@ -602,7 +619,7 @@ export class SlideEditor {
       this.pendingImageId = created.id;
       this.el<HTMLInputElement>("file").click();
     }
-    this.commit(type === "text" ? "Added text" : `Added ${type}`);
+    this.commit(type === "text" ? "Added text" : type === "input" ? "Added input field" : `Added ${type}`);
     if (type === "text") this.startTextEdit();
     return created;
   }
@@ -629,7 +646,7 @@ export class SlideEditor {
   }
 
   private startTextEdit() {
-    if (this.selected()?.type !== "text") return;
+    if (!isTextual(this.selected())) return;
     this.editing = true;
     this.renderSlide();
     this.renderOverlay();
@@ -667,7 +684,7 @@ export class SlideEditor {
     node?.removeAttribute("contenteditable");
     this.root.querySelector(".el.editing")?.classList.remove("editing");
     const selected = this.selected();
-    if (!selected || selected.type !== "text") return;
+    if (!isTextual(selected)) return;
     if (selected.text === text) {
       if (commitChange) this.renderOverlay();
       return;
@@ -708,6 +725,238 @@ export class SlideEditor {
     this.slideIndex = this.deck.slides.length - 1;
     this.selectedId = null;
     this.commit("Added slide");
+    this.revealThumb();
+  }
+
+  private goToSlide(index: number) {
+    const next = Math.max(0, Math.min(index, this.deck.slides.length - 1));
+    if (next === this.slideIndex) return;
+    this.finishTextEdit();
+    this.slideIndex = next;
+    this.selectedId = null;
+    this.render();
+    this.revealThumb();
+  }
+
+  /**
+   * Delete a slide. No confirmation: it is one undo step (⌘Z brings the slide
+   * back and shows it). The last remaining slide stays, a deck needs one.
+   */
+  private deleteSlide(index = this.slideIndex) {
+    if (this.deck.slides.length <= 1 || !this.deck.slides[index]) return;
+    this.finishTextEdit();
+    const shown = this.current();
+    this.deck.slides.splice(index, 1);
+    // Deleting another slide keeps the one on screen; deleting the one on
+    // screen moves to its successor (or the new last slide).
+    const kept = this.deck.slides.indexOf(shown);
+    this.slideIndex = kept >= 0 ? kept : Math.min(index, this.deck.slides.length - 1);
+    if (kept < 0) this.selectedId = null;
+    this.commit(`Deleted slide ${index + 1} · ${UNDO_KEY} to undo`);
+    this.revealThumb();
+  }
+
+  /** Move a slide to position `to` (index in the deck after the move). */
+  private moveSlide(from: number, to: number) {
+    const slides = this.deck.slides;
+    const target = Math.max(0, Math.min(to, slides.length - 1));
+    if (from === target || !slides[from]) return;
+    this.finishTextEdit();
+    const shown = this.current();
+    const [moved] = slides.splice(from, 1);
+    slides.splice(target, 0, moved!);
+    // Whatever was on screen stays on screen.
+    this.slideIndex = Math.max(0, slides.indexOf(shown));
+    this.commit(`Moved slide ${from + 1} to position ${target + 1}`);
+    this.revealThumb();
+  }
+
+  /** Keep the current slide's thumbnail in view in a long filmstrip. */
+  private revealThumb() {
+    this.root
+      .querySelector(`#thumbs .thumb[data-index="${this.slideIndex}"]`)
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
+  private thumbIndex(target: EventTarget | null): number {
+    const thumb = (target as HTMLElement | null)?.closest<HTMLElement>(".thumb");
+    return thumb ? Number(thumb.dataset.index) : -1;
+  }
+
+  /**
+   * Filmstrip interaction, delegated on the container because thumbnails are
+   * rebuilt on every render: click selects, the × deletes, dragging reorders,
+   * and with a thumbnail focused ← → walk the slides, ⌘/Ctrl+← → move the
+   * slide, Delete removes it.
+   */
+  private bindFilmstrip() {
+    const thumbs = this.el("thumbs");
+
+    thumbs.addEventListener("click", (event) => {
+      if (this.suppressThumbClick) {
+        this.suppressThumbClick = false;
+        return;
+      }
+      const index = this.thumbIndex(event.target);
+      if (index < 0) return;
+      if ((event.target as HTMLElement).closest(".thumb-delete")) {
+        this.deleteSlide(index);
+        return;
+      }
+      if (index === this.slideIndex) {
+        // Clicking the current slide deselects, so the Slide panel shows.
+        if (this.selectedIds.length) {
+          this.finishTextEdit();
+          this.selectedId = null;
+          this.render();
+        }
+        return;
+      }
+      this.goToSlide(index);
+    });
+
+    thumbs.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || (event.target as HTMLElement).closest(".thumb-delete")) return;
+      const from = this.thumbIndex(event.target);
+      if (from < 0 || this.deck.slides.length < 2) return;
+      this.suppressThumbClick = false;
+      this.thumbDrag = { from, startX: event.clientX, pointerId: event.pointerId, to: from, active: false };
+    });
+
+    window.addEventListener("pointermove", (event) => {
+      const drag = this.thumbDrag;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      if (!drag.active) {
+        if (Math.abs(event.clientX - drag.startX) <= DRAG_THRESHOLD) return;
+        drag.active = true;
+        thumbs.classList.add("reordering");
+        thumbs.querySelector(`.thumb[data-index="${drag.from}"]`)?.classList.add("dragging");
+      }
+      event.preventDefault();
+      // Long decks: scroll the strip while dragging against either end.
+      const strip = thumbs.parentElement!;
+      const bounds = strip.getBoundingClientRect();
+      if (event.clientX < bounds.left + 48) strip.scrollLeft -= 16;
+      else if (event.clientX > bounds.right - 48) strip.scrollLeft += 16;
+      this.updateThumbDrop(event.clientX);
+    });
+
+    const endDrag = (event: PointerEvent, cancelled: boolean) => {
+      const drag = this.thumbDrag;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      this.thumbDrag = null;
+      if (!drag.active) return;
+      thumbs.classList.remove("reordering");
+      thumbs.querySelector(".thumb.dragging")?.classList.remove("dragging");
+      thumbs.querySelector(".thumb-drop")?.remove();
+      if (cancelled) return;
+      // The click that follows this pointerup belongs to the drag.
+      this.suppressThumbClick = true;
+      window.setTimeout(() => (this.suppressThumbClick = false), 0);
+      this.moveSlide(drag.from, drag.to);
+    };
+    window.addEventListener("pointerup", (event) => endDrag(event, false));
+    window.addEventListener("pointercancel", (event) => endDrag(event, true));
+
+    thumbs.addEventListener("keydown", (event) => {
+      const index = this.thumbIndex(event.target);
+      if (index < 0) return;
+      const meta = event.metaKey || event.ctrlKey;
+      const step = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+      if (step) {
+        if (meta) this.moveSlide(index, index + step);
+        else this.goToSlide(index + step);
+      } else if ((event.key === "Delete" || event.key === "Backspace") && !meta) {
+        this.deleteSlide(index);
+      } else {
+        return;
+      }
+      // Handled here: the editor's own shortcuts (nudge, delete layer) stay out of it.
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  }
+
+  /** Where the dragged thumbnail would land, and the marker that shows it. */
+  private updateThumbDrop(clientX: number) {
+    const drag = this.thumbDrag;
+    if (!drag) return;
+    const thumbs = this.el("thumbs");
+    const nodes = [...thumbs.querySelectorAll<HTMLElement>(".thumb")];
+    // Gap index 0..n: the gap before thumbnail `gap` (n = after the last).
+    let gap = nodes.length;
+    for (const [i, node] of nodes.entries()) {
+      const rect = node.getBoundingClientRect();
+      if (clientX < rect.left + rect.width / 2) {
+        gap = i;
+        break;
+      }
+    }
+    // Dropping into the gap on either side of the dragged slide moves nothing.
+    drag.to = gap > drag.from ? gap - 1 : gap;
+    let marker = thumbs.querySelector<HTMLElement>(".thumb-drop");
+    if (drag.to === drag.from) {
+      marker?.remove();
+      return;
+    }
+    if (!marker) {
+      marker = document.createElement("div");
+      marker.className = "thumb-drop";
+      thumbs.append(marker);
+    }
+    const origin = thumbs.getBoundingClientRect();
+    const before = nodes[gap]?.getBoundingClientRect();
+    const after = nodes[gap - 1]?.getBoundingClientRect();
+    const x = before && after ? (after.right + before.left) / 2 : before ? before.left - 4 : after!.right + 4;
+    marker.style.left = `${x - origin.left}px`;
+  }
+
+  /**
+   * Presenter mode: the deck full screen, starting on the current slide.
+   * Leaving it lands the editor on the slide that was showing.
+   */
+  present() {
+    if (this.presenter) return;
+    const deck = this.getDeck();
+    this.onPresentStart?.();
+    this.presenter = new Presenter({
+      deck,
+      index: this.slideIndex,
+      onFill: (edits) => this.fillFields(edits),
+      onClose: (index) => {
+        this.presenter = null;
+        if (index !== this.slideIndex && this.deck.slides[index]) {
+          this.slideIndex = index;
+          this.selectedId = null;
+        }
+        this.status = "Ready";
+        this.render();
+        this.revealThumb();
+        this.onPresentEnd?.();
+      },
+    });
+  }
+
+  /**
+   * Text typed into input fields while presenting. One history step per
+   * batch, saved like any other edit. No redraw: the editor is covered, and
+   * it renders when the presentation ends.
+   */
+  private fillFields(edits: FieldEdit[]) {
+    let changed = 0;
+    for (const edit of edits) {
+      const component = this.deck.slides
+        .find((slide) => slide.id === edit.slideId)
+        ?.components.find((item) => item.id === edit.componentId);
+      if (!component || component.type !== "input" || component.text === edit.text) continue;
+      component.text = edit.text;
+      changed += 1;
+    }
+    if (changed) this.commit(changed > 1 ? `Filled ${changed} fields` : "Filled field", false);
+  }
+
+  get presenting(): boolean {
+    return this.presenter !== null;
   }
 
   private onKey(event: KeyboardEvent) {
@@ -728,6 +977,11 @@ export class SlideEditor {
       return;
     }
     const meta = event.metaKey || event.ctrlKey;
+    if (meta && event.key === "Enter") {
+      event.preventDefault();
+      this.present();
+      return;
+    }
     if (meta && event.key.toLowerCase() === "z") {
       event.preventDefault();
       if (event.shiftKey) this.redo();
@@ -744,7 +998,7 @@ export class SlideEditor {
       this.selectAll();
       return;
     }
-    if (event.key === "Enter" && this.selected()?.type === "text") {
+    if (event.key === "Enter" && isTextual(this.selected())) {
       event.preventDefault();
       this.startTextEdit();
       return;
@@ -818,9 +1072,7 @@ export class SlideEditor {
     const previous = this.history.pop();
     if (!previous) return;
     this.future.push(this.committed);
-    this.deck = snapshot(previous);
-    this.committed = previous;
-    this.clampSelection();
+    this.restore(previous);
     this.status = "Undo";
     this.onChange?.(this.committed);
     this.render();
@@ -830,17 +1082,27 @@ export class SlideEditor {
     const next = this.future.pop();
     if (!next) return;
     this.history.push(this.committed);
-    this.deck = snapshot(next);
-    this.committed = next;
-    this.clampSelection();
+    this.restore(next);
     this.status = "Redo";
     this.onChange?.(this.committed);
     this.render();
   }
 
-  /** After undo/redo the current slide or selected component may be gone. */
-  private clampSelection() {
-    this.slideIndex = Math.min(this.slideIndex, this.deck.slides.length - 1);
+  /**
+   * Swap in a history state (undo/redo). Slides may have been added, removed
+   * or reordered in between, so the view follows by slide id: a slide that
+   * comes back (undo of a delete) is shown, otherwise the slide on screen
+   * stays on screen wherever it now sits.
+   */
+  private restore(target: Deck) {
+    const before = new Set(this.deck.slides.map((slide) => slide.id));
+    const shownId = this.current().id;
+    this.deck = snapshot(target);
+    this.committed = target;
+    const slides = this.deck.slides;
+    const returned = slides.findIndex((slide) => !before.has(slide.id));
+    const same = slides.findIndex((slide) => slide.id === shownId);
+    this.slideIndex = returned >= 0 ? returned : same >= 0 ? same : Math.min(this.slideIndex, slides.length - 1);
     const ids = new Set(this.current().components.map((component) => component.id));
     this.selectedIds = this.selectedIds.filter((id) => ids.has(id));
   }
@@ -872,53 +1134,7 @@ export class SlideEditor {
     const slide = this.current();
     const node = this.el("slide");
     node.style.background = slide.background;
-    node.replaceChildren(...slide.components.map((component) => this.componentNode(component)));
-  }
-
-  private componentNode(component: SlideComponent): HTMLElement {
-    const el = document.createElement("div");
-    el.className = "el";
-    el.dataset.id = component.id;
-    el.dataset.type = component.type;
-    el.style.left = `${component.x}px`;
-    el.style.top = `${component.y}px`;
-    el.style.width = `${component.width}px`;
-    el.style.height = `${component.height}px`;
-    el.style.opacity = String(component.opacity);
-    el.style.borderRadius = component.borderRadius != null ? `${component.borderRadius}px` : "";
-    el.style.background = component.background ?? "";
-    el.style.border = component.border ?? "";
-    el.style.padding = component.padding != null ? `${component.padding}px` : "";
-
-    if (component.type === "text") {
-      const text = document.createElement("div");
-      text.className = "text";
-      text.textContent = component.text ?? "";
-      text.style.fontSize = `${component.fontSize ?? 32}px`;
-      text.style.fontWeight = String(component.fontWeight ?? 500);
-      text.style.fontFamily = component.fontFamily ?? "Inter, system-ui, sans-serif";
-      text.style.color = component.color ?? "#111827";
-      text.style.textAlign = component.textAlign ?? "left";
-      text.style.lineHeight = String(component.lineHeight ?? 1.25);
-      text.style.letterSpacing = component.letterSpacing != null ? `${component.letterSpacing}px` : "";
-      el.append(text);
-    } else if (component.type === "image") {
-      if (component.src) {
-        const img = document.createElement("img");
-        img.src = component.src;
-        img.alt = component.name;
-        img.style.objectFit = component.objectFit ?? "cover";
-        el.append(img);
-      } else {
-        const ph = document.createElement("div");
-        ph.className = "image-ph";
-        ph.textContent = "Drop an image";
-        el.append(ph);
-      }
-    } else if (component.type === "html") {
-      el.innerHTML = component.html ?? "";
-    }
-    return el;
+    node.replaceChildren(...slide.components.map((component) => componentNode(component)));
   }
 
   private renderOverlay() {
@@ -989,24 +1205,44 @@ export class SlideEditor {
 
   private renderThumbs() {
     const thumbs = this.el("thumbs");
+    // Rebuilding drops focus; give it back so filmstrip shortcuts keep working.
+    const hadFocus = thumbs.contains(document.activeElement);
+    const total = this.deck.slides.length;
     thumbs.replaceChildren();
     this.deck.slides.forEach((slide, index) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "thumb";
-      button.dataset.active = String(index === this.slideIndex);
-      button.style.background = slide.background;
+      const thumb = document.createElement("div");
+      thumb.className = "thumb";
+      thumb.dataset.index = String(index);
+      thumb.dataset.active = String(index === this.slideIndex);
+      thumb.style.background = slide.background;
+
+      const select = document.createElement("button");
+      select.type = "button";
+      select.className = "thumb-select";
+      select.title = total > 1 ? "Drag to reorder" : "";
+      select.setAttribute("aria-label", `Slide ${index + 1} of ${total}: ${slide.name}`);
+      select.setAttribute("aria-current", String(index === this.slideIndex));
+      // One tab stop for the strip; arrows move between slides.
+      select.tabIndex = index === this.slideIndex ? 0 : -1;
       const label = document.createElement("span");
       label.textContent = `${index + 1}. ${slide.name}`;
-      button.append(label);
-      button.addEventListener("click", () => {
-        this.finishTextEdit();
-        this.slideIndex = index;
-        this.selectedId = null;
-        this.render();
-      });
-      thumbs.append(button);
+      select.append(label);
+      thumb.append(select);
+
+      if (total > 1) {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "thumb-delete";
+        remove.title = "Delete slide";
+        remove.setAttribute("aria-label", `Delete slide ${index + 1}`);
+        remove.tabIndex = -1;
+        remove.innerHTML =
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17" /></svg>';
+        thumb.append(remove);
+      }
+      thumbs.append(thumb);
     });
+    if (hadFocus) thumbs.querySelector<HTMLElement>('.thumb[data-active="true"] .thumb-select')?.focus();
   }
 
   private renderProps() {
@@ -1018,13 +1254,34 @@ export class SlideEditor {
       return;
     }
     if (!selected) {
+      const first = this.slideIndex === 0;
+      const last = this.slideIndex === this.deck.slides.length - 1;
+      const only = this.deck.slides.length <= 1;
       props.innerHTML = `
-        <h2>Slide</h2>
+        <h2>Slide ${this.slideIndex + 1} of ${this.deck.slides.length}</h2>
         <div class="field"><label>Name</label><input id="slide-name" value="${escape(this.current().name)}" /></div>
         <div class="field"><label>Background</label><input id="slide-bg" type="color" value="${cssColorToHex(this.current().background)}" /></div>
+        <div class="prop-row slide-actions">
+          <button class="btn icon" id="slide-left" type="button" title="Move slide left" aria-label="Move slide left" ${first ? "disabled" : ""}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6" /></svg>
+          </button>
+          <button class="btn icon" id="slide-right" type="button" title="Move slide right" aria-label="Move slide right" ${last ? "disabled" : ""}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+          </button>
+          <button class="btn" id="slide-delete" type="button" ${only ? "disabled" : ""}>Delete slide</button>
+        </div>
         <div class="field"><label>Deck title</label><input id="deck-name" value="${escape(this.deck.title)}" /></div>
-        <p class="empty-props">Click a layer to edit. Double-click or press Enter to change text. Attach an .html or .pptx deck in chat to edit it here.</p>
+        <p class="empty-props">Click a layer to edit. Double-click or press Enter to change text. Drag a slide in the filmstrip to reorder it. Attach an .html or .pptx deck in chat to edit it here.</p>
       `;
+      // The panel is rebuilt by the move; hand focus back so the button can be pressed again.
+      const move = (id: string, by: number) =>
+        props.querySelector(`#${id}`)?.addEventListener("click", () => {
+          this.moveSlide(this.slideIndex, this.slideIndex + by);
+          props.querySelector<HTMLElement>(`#${id}`)?.focus();
+        });
+      move("slide-left", -1);
+      move("slide-right", 1);
+      props.querySelector("#slide-delete")?.addEventListener("click", () => this.deleteSlide());
       this.bindField("slide-name", (value) => {
         this.current().name = value;
         this.commit("Renamed slide");
@@ -1078,9 +1335,15 @@ export class SlideEditor {
       </div>
       <div class="field"><label>Name</label><input id="prop-name" value="${escape(selected.name)}" /></div>
       ${
-        selected.type === "text"
+        isTextual(selected)
           ? `
-        <div class="field"><label>Text</label><textarea id="prop-text">${escape(selected.text ?? "")}</textarea></div>
+        ${
+          selected.type === "input"
+            ? `<p class="hint">Typed into while presenting, and in the downloaded HTML. The value is saved with the deck.</p>
+        <div class="field"><label>Placeholder</label><input id="prop-placeholder" value="${escape(selected.placeholder ?? "")}" /></div>`
+            : ""
+        }
+        <div class="field"><label>${selected.type === "input" ? "Value" : "Text"}</label><textarea id="prop-text">${escape(selected.text ?? "")}</textarea></div>
         ${numField("Size", "prop-size", selected.fontSize ?? 32)}
         <div class="field"><label>Color</label><input id="prop-color" type="color" value="${cssColorToHex(selected.color ?? "#111827")}" /></div>
         <div class="field"><label>Align</label>
@@ -1107,7 +1370,7 @@ export class SlideEditor {
           : ""
       }
       ${
-        selected.type === "container" || selected.type === "html"
+        selected.type === "container" || selected.type === "html" || selected.type === "input"
           ? `
         <div class="field"><label>Fill</label><input id="prop-bg" type="color" value="${cssColorToHex(selected.background ?? "#ffffff")}" /></div>
         ${numField("Radius", "prop-radius", selected.borderRadius ?? 0)}`
@@ -1139,6 +1402,7 @@ export class SlideEditor {
       const node = this.textNode();
       if (node) node.textContent = value;
     }, "input");
+    this.bindField("prop-placeholder", (value) => this.mutateSelected({ placeholder: value }, "Edited placeholder"));
     bindNum("prop-size", "fontSize");
     this.bindField("prop-color", (value) => this.mutateSelected({ color: value }), "input");
     this.bindField("prop-align", (value) => {
@@ -1165,12 +1429,7 @@ export class SlideEditor {
    */
   playAnimations() {
     this.finishTextEdit();
-    if (!document.getElementById("ld-anim-keyframes")) {
-      const style = document.createElement("style");
-      style.id = "ld-anim-keyframes";
-      style.textContent = ANIMATION_KEYFRAMES;
-      document.head.append(style);
-    }
+    ensureAnimationKeyframes();
     const nodes = this.root.querySelectorAll<HTMLElement>("#slide .el");
     let any = false;
     for (const node of nodes) {

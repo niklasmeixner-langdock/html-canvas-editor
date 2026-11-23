@@ -1,7 +1,8 @@
 export const SLIDE_WIDTH = 1920;
 export const SLIDE_HEIGHT = 1080;
 
-export type ComponentType = "text" | "image" | "container" | "html";
+/** `input` is a field the audience-facing deck lets you type into (presenter mode and the exported file). */
+export type ComponentType = "text" | "image" | "container" | "html" | "input";
 export type TextAlign = "left" | "center" | "right";
 export type ObjectFit = "cover" | "contain" | "fill";
 export type DeckSource = "sample" | "user" | "agent";
@@ -15,7 +16,10 @@ export type SlideComponent = {
   width: number;
   height: number;
   opacity: number;
+  /** Text of a text layer; for an input field, what has been typed into it. */
   text?: string;
+  /** Input fields only: shown while the field is empty. */
+  placeholder?: string;
   fontSize?: number;
   fontWeight?: number;
   fontFamily?: string;
@@ -111,6 +115,27 @@ export function defaultComponent(
     };
   }
 
+  if (type === "input") {
+    return {
+      ...base,
+      name: "Input field",
+      width: 720,
+      height: 200,
+      text: "",
+      placeholder: "Type here…",
+      fontSize: 32,
+      fontWeight: 500,
+      fontFamily: "Inter, system-ui, sans-serif",
+      color: "#111827",
+      textAlign: "left",
+      lineHeight: 1.3,
+      background: "#ffffff",
+      border: "2px solid #d1d5db",
+      borderRadius: 12,
+      padding: 20,
+    };
+  }
+
   if (type === "image") {
     return {
       ...base,
@@ -142,6 +167,11 @@ export function defaultComponent(
     borderRadius: 16,
     border: "1px solid #e5e7eb",
   };
+}
+
+/** Layers that carry text and its typography: text layers and input fields. */
+export function isTextual(component: SlideComponent | undefined): component is SlideComponent {
+  return component?.type === "text" || component?.type === "input";
 }
 
 export function emptySlide(name = "Slide"): Slide {

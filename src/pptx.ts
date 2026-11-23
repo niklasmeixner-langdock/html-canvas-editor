@@ -217,8 +217,9 @@ function geometry(c: SlideComponent): string {
 function shape(c: SlideComponent, spid: number): string {
   const fill = c.background ? fillXml(c.background, c.opacity) : null;
   const line = c.border ? lineXml(c.border, c.opacity) : null;
-  const isText = c.type === "text";
-  const frame = isText ? textFrame(c) : { x: c.x, y: c.y, width: c.width, height: c.height, wrap: true };
+  // An input field goes out as a text box holding whatever was typed into it.
+  const isText = c.type === "text" || c.type === "input";
+  const frame = c.type === "text" ? textFrame(c) : { x: c.x, y: c.y, width: c.width, height: c.height, wrap: true };
   return `<p:sp>
 <p:nvSpPr><p:cNvPr id="${spid}" name="${esc(c.name || c.type)}"/><p:cNvSpPr txBox="${isText ? 1 : 0}"/><p:nvPr/></p:nvSpPr>
 <p:spPr>${xfrm(frame)}${geometry(c)}${fill ?? "<a:noFill/>"}${line ?? "<a:ln><a:noFill/></a:ln>"}</p:spPr>
